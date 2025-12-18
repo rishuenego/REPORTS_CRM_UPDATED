@@ -11,6 +11,7 @@ import talktimeRoutes from "./routes/talktime.js";
 import downloadRoutes from "./routes/downloads.js";
 import messagingRoutes from "./routes/messaging.js";
 import pipelineRoutes from "./routes/pipeline.js";
+import agentRoutes from "./routes/agent.js";
 
 dotenv.config();
 
@@ -51,6 +52,7 @@ app.use("/api/talktime", talktimeRoutes);
 app.use("/api/downloads", downloadRoutes);
 app.use("/api/messaging", messagingRoutes);
 app.use("/api/pipeline", pipelineRoutes);
+app.use("/api/agent", agentRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "API is running" });

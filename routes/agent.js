@@ -8,45 +8,59 @@ const getBranchId = (branch) => {
   return branchMap[branch];
 };
 
-router.get("/report/:branch", async (req, res) => {
+router.get("/list/:branch", async (req, res) => {
   let pgConnection = null;
-  let mysqlConnection = null;
 
   try {
     const { branch } = req.params;
-    const { date } = req.query;
     const branchId = getBranchId(branch.toUpperCase());
 
     if (!branchId) {
       return res.status(400).json({ error: "Invalid branch" });
     }
 
-    if (!pgPool) {
-      return res.status(500).json({ error: "PostgreSQL pool not initialized" });
-    }
-
-    if (!mysqlPool) {
-      return res.status(500).json({ error: "MySQL pool not initialized" });
-    }
-
     pgConnection = await pgPool.connect();
     const { rows: employees } = await pgConnection.query(
-      "SELECT name FROM public.hr_employee WHERE branch_id = $1 ORDER BY id ASC",
+      "SELECT name FROM public.hr_employee WHERE branch_id = $1 ORDER BY name ASC",
       [branchId]
     );
     pgConnection.release();
     pgConnection = null;
 
-    const employeeNames = employees.map((e) => e.name);
+    const agents = employees.map((e) => e.name).filter(Boolean);
+
+    res.json({ agents });
+  } catch (error) {
+    console.error("Agent List Error:", error.message);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (pgConnection) {
+      try {
+        pgConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+});
+
+router.get("/report", async (req, res) => {
+  let mysqlConnection = null;
+
+  try {
+    const { agentName, branch, startDate, endDate } = req.query;
+
+    if (!agentName || !startDate || !endDate) {
+      return res.status(400).json({ error: "Missing required parameters" });
+    }
 
     mysqlConnection = await mysqlPool.getConnection();
 
-    const reportDate = date || new Date().toISOString().split("T")[0];
-
+    // Query for each day in the date range with prospect calculation
     const [rows] = await mysqlConnection.execute(
       `
       SELECT
-          agent_name AS NAME,
+          DATE(combined.date) AS DATE,
           SUM(ans_calls) AS ANS_CALLS,
           SUM(missed_calls) AS MISSED_CALLS,
           SUM(total_calls) AS TOTAL_CALLS,
@@ -54,45 +68,46 @@ router.get("/report/:branch", async (req, res) => {
           SUM(prospect_count) AS PROSPECT
       FROM (
           SELECT
-              agent_name,
+              DATE(createdAt) AS date,
               COUNT(*) AS ans_calls,
               0 AS missed_calls,
               COUNT(*) AS total_calls,
               SUM(duration) AS total_duration,
               SUM(CASE WHEN LOWER(disposition_name) IN ('interested', 'intro', 'dnd') THEN 1 ELSE 0 END) AS prospect_count
           FROM call_logs.DialerAns
-          WHERE DATE(createdAt) = ?
-          GROUP BY agent_name
+          WHERE agent_name LIKE ?
+            AND DATE(createdAt) BETWEEN ? AND ?
+          GROUP BY DATE(createdAt)
 
           UNION ALL
 
           SELECT
-              agent_name,
+              DATE(createdAt) AS date,
               0 AS ans_calls,
               COUNT(*) AS missed_calls,
               COUNT(*) AS total_calls,
               SUM(duration) AS total_duration,
               0 AS prospect_count
           FROM call_logs.DialerMissed
-          WHERE DATE(createdAt) = ?
-          GROUP BY agent_name
+          WHERE agent_name LIKE ?
+            AND DATE(createdAt) BETWEEN ? AND ?
+          GROUP BY DATE(createdAt)
       ) AS combined
-      GROUP BY agent_name
-      ORDER BY SUM(total_duration) DESC
+      GROUP BY DATE(combined.date)
+      ORDER BY DATE(combined.date) DESC
     `,
-      [reportDate, reportDate]
+      [
+        `%${agentName}%`,
+        startDate,
+        endDate,
+        `%${agentName}%`,
+        startDate,
+        endDate,
+      ]
     );
 
     mysqlConnection.release();
     mysqlConnection = null;
-
-    const filteredData = rows.filter((row) => {
-      if (!row.NAME) return false;
-      return employeeNames.some((name) => {
-        if (!name) return false;
-        return row.NAME.toLowerCase().includes(name.toLowerCase());
-      });
-    });
 
     let grandTotalCalls = 0;
     let grandMissedCalls = 0;
@@ -100,7 +115,7 @@ router.get("/report/:branch", async (req, res) => {
     let grandTotalDuration = 0;
     let grandProspect = 0;
 
-    filteredData.forEach((row) => {
+    const formattedData = rows.map((row) => {
       grandTotalCalls += Number(row.ANS_CALLS) || 0;
       grandMissedCalls += Number(row.MISSED_CALLS) || 0;
       grandTotalCallsCount += Number(row.TOTAL_CALLS) || 0;
@@ -115,6 +130,16 @@ router.get("/report/:branch", async (req, res) => {
             Number.parseInt(timeParts[2]);
         }
       }
+
+      return {
+        NAME: agentName,
+        DATE: row.DATE,
+        ANS_CALLS: row.ANS_CALLS,
+        MISSED_CALLS: row.MISSED_CALLS,
+        TOTAL_CALLS: row.TOTAL_CALLS,
+        TALK_TIME: row.TALK_TIME,
+        PROSPECT: row.PROSPECT,
+      };
     });
 
     const hours = Math.floor(grandTotalDuration / 3600);
@@ -126,8 +151,8 @@ router.get("/report/:branch", async (req, res) => {
     )}:${String(seconds).padStart(2, "0")}`;
 
     res.json({
-      branch,
-      data: filteredData,
+      agentName,
+      data: formattedData,
       grandTotals: {
         ansCalls: grandTotalCalls,
         missedCalls: grandMissedCalls,
@@ -137,16 +162,9 @@ router.get("/report/:branch", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Talktime Error:", error.message, error.stack);
-    res.status(500).json({ error: error.message, stack: error.stack });
+    console.error("Agent Report Error:", error.message, error.stack);
+    res.status(500).json({ error: error.message });
   } finally {
-    if (pgConnection) {
-      try {
-        pgConnection.release();
-      } catch (e) {
-        /* ignore */
-      }
-    }
     if (mysqlConnection) {
       try {
         mysqlConnection.release();
