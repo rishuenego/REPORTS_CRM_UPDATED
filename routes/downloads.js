@@ -13,9 +13,54 @@ const convertTimeToMinutes = (timeStr) => {
   return hours * 60 + minutes + seconds / 60;
 };
 
+// Dispo order for reports
+const DISPO_ORDER = [
+  "ALREADY PAID",
+  "BUSY",
+  "CALL BACK",
+  "INTERESTED",
+  "INTRODUCTION",
+  "LANGUAGE ISSUE",
+  "NEED UPDATE",
+  "NOT INTERESTED",
+  "NOT PICKUP",
+  "OTHER",
+  "SCRAP",
+  "UNDISPOSED",
+];
+
+// Get row style based on disposition
+const getDispoFillColor = (dispo) => {
+  switch (dispo) {
+    case "INTERESTED":
+    case "INTRODUCTION":
+      return "92D050"; // Green
+    case "NOT INTERESTED":
+      return "C65911"; // Orange
+    default:
+      return "FFFFFF"; // White
+  }
+};
+
+const getDispoFontColor = (dispo) => {
+  switch (dispo) {
+    case "NOT INTERESTED":
+      return "FFFFFF"; // White text
+    default:
+      return "000000"; // Black text
+  }
+};
+
 router.post("/talktime-excel", async (req, res) => {
   try {
-    const { data, branch, user_id, grandTotals, talktimeThreshold } = req.body;
+    const {
+      data,
+      branch,
+      user_id,
+      grandTotals,
+      talktimeThreshold,
+      reportType = "DIALER",
+    } = req.body;
 
     if (!data || !branch || !user_id) {
       return res.status(400).json({ error: "Missing required fields" });
@@ -24,55 +69,174 @@ router.post("/talktime-excel", async (req, res) => {
     const workbook = XLSX.utils.book_new();
     const worksheetData = [];
 
-    const branchHeader = `${branch.toUpperCase()} TALK TIME REPORT`;
+    let branchHeader = `${branch.toUpperCase()} `;
+    if (reportType === "CRM") {
+      branchHeader += "CRM CALL REPORT";
+    } else if (reportType === "MASTER") {
+      branchHeader += "MASTER CALL REPORT";
+    } else {
+      branchHeader += "DIALER TALK TIME REPORT";
+    }
     worksheetData.push([branchHeader]);
 
-    worksheetData.push([
-      "SR NO.",
-      "NAME",
-      "ANS CALLS",
-      "MISSED CALLS",
-      "TOTAL CALLS",
-      "TALK TIME",
-      "PROSPECT",
-    ]);
-
-    data.forEach((row, i) => {
+    if (reportType === "MASTER") {
+      // Header row 1 - Main categories
       worksheetData.push([
-        i + 1,
-        row.NAME || "",
-        row.ANS_CALLS || 0,
-        row.MISSED_CALLS || 0,
-        row.TOTAL_CALLS || 0,
-        row.TALK_TIME || "",
-        row.PROSPECT || 0,
+        "",
+        "",
+        "DIALER",
+        "",
+        "",
+        "",
+        "",
+        "CRM",
+        "",
+        "GRAND TOTAL",
+        "",
       ]);
-    });
+      // Header row 2 - Sub categories
+      worksheetData.push([
+        "SR NO.",
+        "NAME",
+        "ANS CALLS",
+        "MISSED CALLS",
+        "PROSPECT",
+        "TALKTIME",
+        "TOTAL CALLS",
+        "CALLS",
+        "PROSPECT",
+        "PROSPECT",
+        "CALLS",
+      ]);
 
-    worksheetData.push([
-      "GRAND TOTAL",
-      "",
-      grandTotals?.ansCalls || 0,
-      grandTotals?.missedCalls || 0,
-      grandTotals?.totalCalls || 0,
-      grandTotals?.talkTime || "",
-      grandTotals?.prospect || 0,
-    ]);
+      data.forEach((row, i) => {
+        worksheetData.push([
+          i + 1,
+          row.NAME || "",
+          row.ANS_CALLS || 0,
+          row.MISSED_CALLS || 0,
+          row.PROSPECT || 0,
+          row.TALK_TIME || "0:00:00",
+          row.TOTAL_CALLS || 0,
+          row.CRM_CALLS || 0,
+          row.CRM_PROSPECT || 0,
+          (row.PROSPECT || 0) + (row.CRM_PROSPECT || 0),
+          row.TOTAL_CALLS + (row.CRM_CALLS || 0),
+        ]);
+      });
+
+      worksheetData.push([
+        "GRAND TOTAL",
+        "",
+        grandTotals?.ansCalls || 0,
+        grandTotals?.missedCalls || 0,
+        grandTotals?.prospect || 0,
+        grandTotals?.talkTime || "0:00:00",
+        grandTotals?.totalCalls || 0,
+        grandTotals?.crmCalls || 0,
+        grandTotals?.crmProspect || 0,
+        grandTotals?.grandProspect || 0,
+        grandTotals?.grandCalls || 0,
+      ]);
+    } else if (reportType === "CRM") {
+      worksheetData.push(["SR NO.", "NAME", "CRM CALLS", "PROSPECT", "TOTAL"]);
+
+      data.forEach((row, i) => {
+        worksheetData.push([
+          i + 1,
+          row.NAME || "",
+          row.CRM_CALLS || row.ANS_CALLS || 0,
+          row.CRM_PROSPECT || row.PROSPECT || 0,
+          row.CRM_CALLS || row.TOTAL_CALLS || 0,
+        ]);
+      });
+
+      worksheetData.push([
+        "GRAND TOTAL",
+        "",
+        grandTotals?.crmCalls || grandTotals?.ansCalls || 0,
+        grandTotals?.crmProspect || grandTotals?.prospect || 0,
+        grandTotals?.crmCalls || grandTotals?.totalCalls || 0,
+      ]);
+    } else {
+      worksheetData.push([
+        "SR NO.",
+        "NAME",
+        "ANS CALLS",
+        "MISSED CALLS",
+        "TOTAL CALLS",
+        "PROSPECT",
+        "TALK TIME",
+      ]);
+
+      data.forEach((row, i) => {
+        worksheetData.push([
+          i + 1,
+          row.NAME || "",
+          row.ANS_CALLS || 0,
+          row.MISSED_CALLS || 0,
+          row.TOTAL_CALLS || 0,
+          row.PROSPECT || 0,
+          row.TALK_TIME || "",
+        ]);
+      });
+
+      worksheetData.push([
+        "GRAND TOTAL",
+        "",
+        grandTotals?.ansCalls || 0,
+        grandTotals?.missedCalls || 0,
+        grandTotals?.totalCalls || 0,
+        grandTotals?.prospect || 0,
+        grandTotals?.talkTime || "",
+      ]);
+    }
 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
 
-    worksheet["!cols"] = [
-      { wch: 10 },
-      { wch: 25 },
-      { wch: 12 },
-      { wch: 14 },
-      { wch: 12 },
-      { wch: 12 },
-      { wch: 12 },
-    ];
+    if (reportType === "MASTER") {
+      worksheet["!cols"] = [
+        { wch: 8 }, // SR NO
+        { wch: 25 }, // NAME
+        { wch: 12 }, // ANS CALLS
+        { wch: 14 }, // MISSED CALLS
+        { wch: 12 }, // PROSPECT
+        { wch: 12 }, // TALKTIME
+        { wch: 12 }, // TOTAL CALLS
+        { wch: 10 }, // CRM CALLS
+        { wch: 12 }, // CRM PROSPECT
+        { wch: 12 }, // GRAND PROSPECT
+        { wch: 12 }, // GRAND CALLS
+      ];
+      worksheet["!merges"] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }, // Title row
+        { s: { r: 1, c: 2 }, e: { r: 1, c: 6 } }, // DIALER header
+        { s: { r: 1, c: 7 }, e: { r: 1, c: 8 } }, // CRM header
+        { s: { r: 1, c: 9 }, e: { r: 1, c: 10 } }, // GRAND TOTAL header
+      ];
+    } else if (reportType === "CRM") {
+      worksheet["!cols"] = [
+        { wch: 10 },
+        { wch: 25 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+      ];
+      worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+    } else {
+      worksheet["!cols"] = [
+        { wch: 10 },
+        { wch: 25 },
+        { wch: 12 },
+        { wch: 14 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+      ];
+      worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
+    }
 
-    worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
-
+    // Title style
     worksheet["A1"].s = {
       font: { bold: true, sz: 20, color: { rgb: "000000" } },
       fill: { fgColor: { rgb: "FFFF00" } },
@@ -86,6 +250,18 @@ router.post("/talktime-excel", async (req, res) => {
     };
 
     const headerStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "002060" } },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
+
+    const dialerHeaderStyle = {
       font: { bold: true, color: { rgb: "000000" } },
       fill: { fgColor: { rgb: "FFFF00" } },
       alignment: { horizontal: "center" },
@@ -96,44 +272,10 @@ router.post("/talktime-excel", async (req, res) => {
         right: { style: "thin" },
       },
     };
-    ["A2", "B2", "C2", "D2", "E2", "F2", "G2"].forEach((cell) => {
-      if (worksheet[cell]) worksheet[cell].s = headerStyle;
-    });
 
-    data.forEach((row, index) => {
-      const excelRow = index + 3;
-
-      let fillColor;
-      if (talktimeThreshold !== undefined && talktimeThreshold !== null) {
-        const agentMinutes = convertTimeToMinutes(row.TALK_TIME || "0:0:0");
-        fillColor = agentMinutes >= talktimeThreshold ? "CCFFCC" : "FFCCCC";
-      } else {
-        const position = (index / data.length) * 100;
-        fillColor = position < 50 ? "CCFFCC" : "FFCCCC";
-      }
-
-      const style = {
-        fill: { fgColor: { rgb: fillColor } },
-        alignment: { horizontal: "center" },
-        border: {
-          top: { style: "thin" },
-          left: { style: "thin" },
-          bottom: { style: "thin" },
-          right: { style: "thin" },
-        },
-      };
-      ["A", "B", "C", "D", "E", "F", "G"].forEach((col) => {
-        const cell = worksheet[col + excelRow];
-        if (cell) cell.s = style;
-      });
-    });
-
-    const totalRow = worksheetData.length;
-    const totalCells = ["A", "B", "C", "D", "E", "F", "G"];
-
-    const totalStyle = {
-      font: { bold: true },
-      fill: { fgColor: { rgb: "FFFF00" } },
+    const crmHeaderStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "00B050" } },
       alignment: { horizontal: "center" },
       border: {
         top: { style: "thin" },
@@ -143,15 +285,141 @@ router.post("/talktime-excel", async (req, res) => {
       },
     };
 
-    totalCells.forEach((col) => {
-      const cell = worksheet[col + totalRow];
-      if (cell) cell.s = totalStyle;
-    });
+    const grandTotalHeaderStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "0070C0" } },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
 
-    worksheet["!merges"].push({
-      s: { r: totalRow - 1, c: 0 },
-      e: { r: totalRow - 1, c: 1 },
-    });
+    if (reportType === "MASTER") {
+      const colCount = 11;
+      const cols = "ABCDEFGHIJK".slice(0, colCount).split("");
+
+      // Style category headers (row 2)
+      ["C2", "D2", "E2", "F2", "G2"].forEach((cell) => {
+        if (worksheet[cell]) worksheet[cell].s = dialerHeaderStyle;
+      });
+      ["H2", "I2"].forEach((cell) => {
+        if (worksheet[cell]) worksheet[cell].s = crmHeaderStyle;
+      });
+      ["J2", "K2"].forEach((cell) => {
+        if (worksheet[cell]) worksheet[cell].s = grandTotalHeaderStyle;
+      });
+
+      // Style sub-headers (row 3)
+      cols.forEach((col) => {
+        const cell = worksheet[col + "3"];
+        if (cell) cell.s = headerStyle;
+      });
+
+      // Data rows start at row 4
+      data.forEach((row, index) => {
+        const excelRow = index + 4;
+        const position = (index / data.length) * 100;
+        const fillColor = position < 50 ? "CCFFCC" : "FFCCCC";
+
+        const style = {
+          fill: { fgColor: { rgb: fillColor } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+
+        cols.forEach((col) => {
+          const cell = worksheet[col + excelRow];
+          if (cell) cell.s = style;
+        });
+      });
+
+      // Grand total row
+      const totalRow = worksheetData.length;
+      const totalStyle = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: "FFFF00" } },
+        alignment: { horizontal: "center" },
+        border: {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        },
+      };
+
+      cols.forEach((col) => {
+        const cell = worksheet[col + totalRow];
+        if (cell) cell.s = totalStyle;
+      });
+
+      // Merge grand total label
+      worksheet["!merges"].push({
+        s: { r: totalRow - 1, c: 0 },
+        e: { r: totalRow - 1, c: 1 },
+      });
+    } else {
+      const colCount = reportType === "CRM" ? 5 : 7;
+      const cols = "ABCDEFGHIJK".slice(0, colCount).split("");
+
+      cols.forEach((col) => {
+        const cell = worksheet[col + "2"];
+        if (cell) cell.s = headerStyle;
+      });
+
+      data.forEach((row, index) => {
+        const excelRow = index + 3;
+        const position = (index / data.length) * 100;
+        const fillColor = position < 50 ? "CCFFCC" : "FFCCCC";
+
+        const style = {
+          fill: { fgColor: { rgb: fillColor } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+
+        cols.forEach((col) => {
+          const cell = worksheet[col + excelRow];
+          if (cell) cell.s = style;
+        });
+      });
+
+      const totalRow = worksheetData.length;
+      const totalStyle = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: "FFFF00" } },
+        alignment: { horizontal: "center" },
+        border: {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        },
+      };
+
+      cols.forEach((col) => {
+        const cell = worksheet[col + totalRow];
+        if (cell) cell.s = totalStyle;
+      });
+
+      const mergeCols = 1;
+      worksheet["!merges"].push({
+        s: { r: totalRow - 1, c: 0 },
+        e: { r: totalRow - 1, c: mergeCols },
+      });
+    }
 
     XLSX.utils.book_append_sheet(workbook, worksheet, `${branch} Report`);
 
@@ -161,7 +429,7 @@ router.post("/talktime-excel", async (req, res) => {
       {
         user_id,
         branch,
-        report_type: "talktime",
+        report_type: reportType.toLowerCase(),
         downloaded_at: new Date().toISOString(),
       },
     ]);
@@ -172,12 +440,533 @@ router.post("/talktime-excel", async (req, res) => {
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${branch}_TalkTime_Report.xlsx"`
+      `attachment; filename="${branch}_${reportType}_Report.xlsx"`
     );
 
     res.send(buffer);
   } catch (error) {
     console.error("Error in talktime-excel:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/dispo-excel", async (req, res) => {
+  try {
+    const { data, branch, user_id, summary, date } = req.body;
+
+    if (!data || !branch || !user_id) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const workbook = XLSX.utils.book_new();
+    const worksheetData = [];
+
+    // Format date for title
+    const reportDate = new Date(date);
+    const day = reportDate.getDate();
+    const suffix =
+      day === 1 || day === 21 || day === 31
+        ? "ST"
+        : day === 2 || day === 22
+        ? "ND"
+        : day === 3 || day === 23
+        ? "RD"
+        : "TH";
+    const month = reportDate
+      .toLocaleString("en-US", { month: "short" })
+      .toUpperCase();
+    const year = reportDate.getFullYear();
+    const dateTitle = `${day}${suffix} ${month} ${year}`;
+
+    // Title row
+    worksheetData.push([`DISPO REPORT OF ${dateTitle} TILL TIME`]);
+
+    worksheetData.push([
+      "SR NO",
+      "DISPO",
+      "DIALER CALLS",
+      "CRM CALLS",
+      "TOTAL CALLS",
+    ]);
+
+    // Data rows
+    data.forEach((row, i) => {
+      worksheetData.push([
+        i + 1,
+        row.DISPO,
+        row.DIALER_CALLS || 0,
+        row.CRM_CALLS || 0,
+        row.TOTAL_CALLS || 0,
+      ]);
+    });
+
+    // Summary rows
+    worksheetData.push([
+      "GRAND TOTAL",
+      "",
+      summary.grandTotal.dialer,
+      summary.grandTotal.crm,
+      summary.grandTotal.total,
+    ]);
+    worksheetData.push([
+      "ANS CALLS",
+      "",
+      summary.ansCalls.dialer,
+      summary.ansCalls.crm,
+      summary.ansCalls.total,
+    ]);
+    worksheetData.push([
+      "PROSPECT",
+      "",
+      summary.prospect.dialer,
+      summary.prospect.crm,
+      summary.prospect.total,
+    ]);
+    worksheetData.push([
+      "RATIO",
+      "",
+      summary.ratio.dialer,
+      summary.ratio.crm,
+      summary.ratio.total,
+    ]);
+    worksheetData.push([
+      "PICKUP RATIO",
+      "",
+      summary.pickupRatio.dialer,
+      summary.pickupRatio.crm,
+      summary.pickupRatio.total,
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+
+    worksheet["!cols"] = [
+      { wch: 10 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 12 },
+      { wch: 12 },
+    ];
+    worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+
+    // Title style - deep blue background, white text
+    worksheet["A1"].s = {
+      font: { bold: true, sz: 14, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "002060" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
+
+    // Header style - deep blue background, white text
+    const headerStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "002060" } },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
+    ["A2", "B2", "C2", "D2", "E2"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = headerStyle;
+    });
+
+    // Data rows styling
+    data.forEach((row, index) => {
+      const excelRow = index + 3;
+      const fillColor = getDispoFillColor(row.DISPO);
+      const fontColor = getDispoFontColor(row.DISPO);
+
+      const style = {
+        font: { color: { rgb: fontColor } },
+        fill: { fgColor: { rgb: fillColor } },
+        alignment: { horizontal: "center" },
+        border: {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        },
+      };
+      ["A", "B", "C", "D", "E"].forEach((col) => {
+        const cell = worksheet[col + excelRow];
+        if (cell) cell.s = style;
+      });
+    });
+
+    // Summary row styles
+    const dataLength = data.length + 3;
+
+    // Grand Total - deep blue
+    const grandTotalRow = dataLength;
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + grandTotalRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "FFFFFF" } },
+          fill: { fgColor: { rgb: "002060" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // ANS CALLS - orange
+    const ansRow = dataLength + 1;
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + ansRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "FFFFFF" } },
+          fill: { fgColor: { rgb: "C65911" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // PROSPECT - green
+    const prospectRow = dataLength + 2;
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + prospectRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "000000" } },
+          fill: { fgColor: { rgb: "92D050" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // RATIO and PICKUP RATIO - light blue
+    [dataLength + 3, dataLength + 4].forEach((rowNum) => {
+      ["A", "B", "C", "D", "E"].forEach((col) => {
+        const cell = worksheet[col + rowNum];
+        if (cell)
+          cell.s = {
+            font: { bold: true, color: { rgb: "FFFFFF" } },
+            fill: { fgColor: { rgb: "00B0F0" } },
+            alignment: { horizontal: "center" },
+            border: {
+              top: { style: "thin" },
+              left: { style: "thin" },
+              bottom: { style: "thin" },
+              right: { style: "thin" },
+            },
+          };
+      });
+    });
+
+    // Merge cells for summary labels
+    worksheet["!merges"].push(
+      { s: { r: grandTotalRow - 1, c: 0 }, e: { r: grandTotalRow - 1, c: 1 } },
+      { s: { r: ansRow - 1, c: 0 }, e: { r: ansRow - 1, c: 1 } },
+      { s: { r: prospectRow - 1, c: 0 }, e: { r: prospectRow - 1, c: 1 } },
+      { s: { r: dataLength + 2, c: 0 }, e: { r: dataLength + 2, c: 1 } },
+      { s: { r: dataLength + 3, c: 0 }, e: { r: dataLength + 3, c: 1 } }
+    );
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Dispo Report");
+
+    const buffer = XLSX.write(workbook, { type: "buffer" });
+
+    await supabase.from("download_logs").insert([
+      {
+        user_id,
+        branch,
+        report_type: "dispo",
+        downloaded_at: new Date().toISOString(),
+      },
+    ]);
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${branch}_Dispo_Report.xlsx"`
+    );
+
+    res.send(buffer);
+  } catch (error) {
+    console.error("Error in dispo-excel:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/agent-dispo-excel", async (req, res) => {
+  try {
+    const { data, agentName, user_id, summary, startDate, endDate } = req.body;
+
+    if (!data || !agentName || !user_id) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const workbook = XLSX.utils.book_new();
+    const worksheetData = [];
+
+    // Format dates for title
+    const formatDate = (dateStr) => {
+      const d = new Date(dateStr);
+      const day = d.getDate();
+      const suffix =
+        day === 1 || day === 21 || day === 31
+          ? "ST"
+          : day === 2 || day === 22
+          ? "ND"
+          : day === 3 || day === 23
+          ? "RD"
+          : "TH";
+      const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
+      const year = d.getFullYear();
+      return `${day}${suffix} ${month} ${year}`;
+    };
+
+    const dateRange =
+      startDate === endDate
+        ? formatDate(startDate)
+        : `${formatDate(startDate)} - ${formatDate(endDate)}`;
+
+    // Title row
+    worksheetData.push([`DISPO REPORT OF ${dateRange} (${agentName})`]);
+
+    // Header row
+    worksheetData.push([
+      "SR NO",
+      "DISPO",
+      "DIALER CALLS",
+      "CRM CALLS",
+      "TOTAL CALLS",
+    ]);
+
+    // Data rows
+    data.forEach((row, i) => {
+      worksheetData.push([
+        i + 1,
+        row.DISPO,
+        row.DIALER_CALLS || 0,
+        row.CRM_CALLS || 0,
+        row.TOTAL_CALLS || 0,
+      ]);
+    });
+
+    // Summary rows
+    worksheetData.push([
+      "GRAND TOTAL",
+      "",
+      summary.grandTotal.dialer,
+      summary.grandTotal.crm,
+      summary.grandTotal.total,
+    ]);
+    worksheetData.push([
+      "ANS CALLS",
+      "",
+      summary.ansCalls.dialer,
+      summary.ansCalls.crm,
+      summary.ansCalls.total,
+    ]);
+    worksheetData.push([
+      "PROSPECT",
+      "",
+      summary.prospect.dialer,
+      summary.prospect.crm,
+      summary.prospect.total,
+    ]);
+    worksheetData.push([
+      "RATIO",
+      "",
+      summary.ratio.dialer,
+      summary.ratio.crm,
+      summary.ratio.total,
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+
+    worksheet["!cols"] = [
+      { wch: 10 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 12 },
+      { wch: 12 },
+    ];
+    worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+
+    // Title style
+    worksheet["A1"].s = {
+      font: { bold: true, sz: 14, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "002060" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
+
+    // Header style
+    const headerStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "002060" } },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
+    ["A2", "B2", "C2", "D2", "E2"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = headerStyle;
+    });
+
+    // Data rows styling
+    data.forEach((row, index) => {
+      const excelRow = index + 3;
+      const fillColor = getDispoFillColor(row.DISPO);
+      const fontColor = getDispoFontColor(row.DISPO);
+
+      const style = {
+        font: { color: { rgb: fontColor } },
+        fill: { fgColor: { rgb: fillColor } },
+        alignment: { horizontal: "center" },
+        border: {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        },
+      };
+      ["A", "B", "C", "D", "E"].forEach((col) => {
+        const cell = worksheet[col + excelRow];
+        if (cell) cell.s = style;
+      });
+    });
+
+    // Summary row styles
+    const dataLength = data.length + 3;
+
+    // Grand Total
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + dataLength];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "FFFFFF" } },
+          fill: { fgColor: { rgb: "002060" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // ANS CALLS
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + (dataLength + 1)];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "FFFFFF" } },
+          fill: { fgColor: { rgb: "C65911" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // PROSPECT
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + (dataLength + 2)];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "000000" } },
+          fill: { fgColor: { rgb: "92D050" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // RATIO
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + (dataLength + 3)];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "FFFFFF" } },
+          fill: { fgColor: { rgb: "00B0F0" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // Merge cells for summary labels
+    worksheet["!merges"].push(
+      { s: { r: dataLength - 1, c: 0 }, e: { r: dataLength - 1, c: 1 } },
+      { s: { r: dataLength, c: 0 }, e: { r: dataLength, c: 1 } },
+      { s: { r: dataLength + 1, c: 0 }, e: { r: dataLength + 1, c: 1 } },
+      { s: { r: dataLength + 2, c: 0 }, e: { r: dataLength + 2, c: 1 } }
+    );
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Agent Dispo Report");
+
+    const buffer = XLSX.write(workbook, { type: "buffer" });
+
+    await supabase.from("download_logs").insert([
+      {
+        user_id,
+        branch: "AGENT",
+        report_type: "agent_dispo",
+        downloaded_at: new Date().toISOString(),
+      },
+    ]);
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${agentName}_Dispo_Report.xlsx"`
+    );
+
+    res.send(buffer);
+  } catch (error) {
+    console.error("Error in agent-dispo-excel:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -201,45 +990,61 @@ router.post("/agent-excel", async (req, res) => {
     const workbook = XLSX.utils.book_new();
     const worksheetData = [];
 
-    const header = `${agentName} - AGENT REPORT (${startDate} to ${endDate})`;
-    worksheetData.push([header]);
+    // Format dates for title
+    const formatDate = (dateStr) => {
+      const d = new Date(dateStr);
+      const day = d.getDate();
+      const suffix =
+        day === 1 || day === 21 || day === 31
+          ? "ST"
+          : day === 2 || day === 22
+          ? "ND"
+          : day === 3 || day === 23
+          ? "RD"
+          : "TH";
+      const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
+      const year = d.getFullYear();
+      return `${day}${suffix} ${month} ${year}`;
+    };
 
+    const dateRange =
+      startDate === endDate
+        ? formatDate(startDate)
+        : `${formatDate(startDate)} - ${formatDate(endDate)}`;
+
+    worksheetData.push([`${agentName} REPORT (${dateRange})`]);
     worksheetData.push([
-      "SR NO.",
       "DATE",
       "ANS CALLS",
       "MISSED CALLS",
       "TOTAL CALLS",
-      "TALK TIME",
       "PROSPECT",
+      "TALK TIME",
     ]);
 
-    data.forEach((row, i) => {
+    data.forEach((row) => {
       worksheetData.push([
-        i + 1,
-        row.DATE ? new Date(row.DATE).toLocaleDateString("en-IN") : "",
+        row.DATE || "",
         row.ANS_CALLS || 0,
         row.MISSED_CALLS || 0,
         row.TOTAL_CALLS || 0,
-        row.TALK_TIME || "",
         row.PROSPECT || 0,
+        row.TALK_TIME || "",
       ]);
     });
 
     worksheetData.push([
       "GRAND TOTAL",
-      "",
       grandTotals?.ansCalls || 0,
       grandTotals?.missedCalls || 0,
       grandTotals?.totalCalls || 0,
-      grandTotals?.talkTime || "",
       grandTotals?.prospect || 0,
+      grandTotals?.talkTime || "",
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
 
     worksheet["!cols"] = [
-      { wch: 10 },
       { wch: 15 },
       { wch: 12 },
       { wch: 14 },
@@ -247,8 +1052,7 @@ router.post("/agent-excel", async (req, res) => {
       { wch: 12 },
       { wch: 12 },
     ];
-
-    worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
+    worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
 
     worksheet["A1"].s = {
       font: { bold: true, sz: 16, color: { rgb: "000000" } },
@@ -273,20 +1077,14 @@ router.post("/agent-excel", async (req, res) => {
         right: { style: "thin" },
       },
     };
-    ["A2", "B2", "C2", "D2", "E2", "F2", "G2"].forEach((cell) => {
+    ["A2", "B2", "C2", "D2", "E2", "F2"].forEach((cell) => {
       if (worksheet[cell]) worksheet[cell].s = headerStyle;
     });
 
     data.forEach((row, index) => {
       const excelRow = index + 3;
-
-      let fillColor;
-      if (talktimeThreshold !== undefined && talktimeThreshold !== null) {
-        const agentMinutes = convertTimeToMinutes(row.TALK_TIME || "0:0:0");
-        fillColor = agentMinutes >= talktimeThreshold ? "CCFFCC" : "FFCCCC";
-      } else {
-        fillColor = index % 2 === 0 ? "FFFFFF" : "F0F0F0";
-      }
+      const position = (index / data.length) * 100;
+      const fillColor = position < 50 ? "CCFFCC" : "FFCCCC";
 
       const style = {
         fill: { fgColor: { rgb: fillColor } },
@@ -298,7 +1096,7 @@ router.post("/agent-excel", async (req, res) => {
           right: { style: "thin" },
         },
       };
-      ["A", "B", "C", "D", "E", "F", "G"].forEach((col) => {
+      ["A", "B", "C", "D", "E", "F"].forEach((col) => {
         const cell = worksheet[col + excelRow];
         if (cell) cell.s = style;
       });
@@ -316,14 +1114,9 @@ router.post("/agent-excel", async (req, res) => {
         right: { style: "thin" },
       },
     };
-    ["A", "B", "C", "D", "E", "F", "G"].forEach((col) => {
+    ["A", "B", "C", "D", "E", "F"].forEach((col) => {
       const cell = worksheet[col + totalRow];
       if (cell) cell.s = totalStyle;
-    });
-
-    worksheet["!merges"].push({
-      s: { r: totalRow - 1, c: 0 },
-      e: { r: totalRow - 1, c: 1 },
     });
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "Agent Report");
@@ -345,7 +1138,7 @@ router.post("/agent-excel", async (req, res) => {
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${agentName}_Agent_Report.xlsx"`
+      `attachment; filename="${agentName}_Report.xlsx"`
     );
 
     res.send(buffer);
@@ -357,53 +1150,77 @@ router.post("/agent-excel", async (req, res) => {
 
 router.post("/pipeline-excel", async (req, res) => {
   try {
-    const { data, branch, user_id, summary, grandTotals } = req.body;
+    const { data, branch, user_id, summary, grandTotals, month, year } =
+      req.body;
 
-    if (!branch || !user_id) {
+    if (!data || !branch || !user_id) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
     const workbook = XLSX.utils.book_new();
+    const worksheetData = [];
 
-    const summaryData = [];
-    const branchHeader = `${branch.toUpperCase()} PIPELINE REPORT - SUMMARY`;
-    summaryData.push([branchHeader]);
-    summaryData.push([
+    const monthNames = [
+      "JAN",
+      "FEB",
+      "MAR",
+      "APR",
+      "MAY",
+      "JUN",
+      "JUL",
+      "AUG",
+      "SEP",
+      "OCT",
+      "NOV",
+      "DEC",
+    ];
+    const monthName = month
+      ? monthNames[month - 1]
+      : monthNames[new Date().getMonth()];
+    const reportYear = year || new Date().getFullYear();
+
+    worksheetData.push([
+      `${branch.toUpperCase()} PIPELINE REPORT - ${monthName} ${reportYear}`,
+    ]);
+    worksheetData.push([
       "SR NO.",
-      "EMPLOYEE NAME",
-      "NO. OF CLIENTS",
-      "EXPECTED REVENUE",
+      "NAME",
+      "INTERESTED",
+      "INTRODUCTION",
+      "TOTAL PROSPECT",
     ]);
 
-    summary.forEach((row, i) => {
-      summaryData.push([
+    data.forEach((row, i) => {
+      worksheetData.push([
         i + 1,
-        row.name || "Unassigned",
-        row.clientCount || 0,
-        row.totalRevenue || 0,
+        row.NAME || "",
+        row.INTERESTED || 0,
+        row.INTRODUCTION || 0,
+        row.TOTAL_PROSPECT || 0,
       ]);
     });
 
-    summaryData.push([
+    worksheetData.push([
       "GRAND TOTAL",
       "",
-      grandTotals?.totalClients || 0,
-      grandTotals?.totalRevenue || 0,
+      grandTotals?.interested || 0,
+      grandTotals?.introduction || 0,
+      grandTotals?.totalProspect || 0,
     ]);
 
-    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
 
-    summarySheet["!cols"] = [
+    worksheet["!cols"] = [
       { wch: 10 },
-      { wch: 30 },
-      { wch: 15 },
-      { wch: 20 },
+      { wch: 25 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 14 },
     ];
+    worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
 
-    summarySheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } }];
-
-    summarySheet["A1"].s = {
-      font: { bold: true, sz: 18, color: { rgb: "000000" } },
+    worksheet["A1"].s = {
+      font: { bold: true, sz: 16, color: { rgb: "000000" } },
       fill: { fgColor: { rgb: "FFFF00" } },
       alignment: { horizontal: "center", vertical: "center" },
       border: {
@@ -425,13 +1242,13 @@ router.post("/pipeline-excel", async (req, res) => {
         right: { style: "thin" },
       },
     };
-    ["A2", "B2", "C2", "D2"].forEach((cell) => {
-      if (summarySheet[cell]) summarySheet[cell].s = headerStyle;
+    ["A2", "B2", "C2", "D2", "E2"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = headerStyle;
     });
 
-    summary.forEach((row, index) => {
+    data.forEach((row, index) => {
       const excelRow = index + 3;
-      const position = (index / summary.length) * 100;
+      const position = (index / data.length) * 100;
       const fillColor = position < 50 ? "CCFFCC" : "FFCCCC";
 
       const style = {
@@ -444,13 +1261,13 @@ router.post("/pipeline-excel", async (req, res) => {
           right: { style: "thin" },
         },
       };
-      ["A", "B", "C", "D"].forEach((col) => {
-        const cell = summarySheet[col + excelRow];
+      ["A", "B", "C", "D", "E"].forEach((col) => {
+        const cell = worksheet[col + excelRow];
         if (cell) cell.s = style;
       });
     });
 
-    const totalRow = summaryData.length;
+    const totalRow = worksheetData.length;
     const totalStyle = {
       font: { bold: true },
       fill: { fgColor: { rgb: "FFFF00" } },
@@ -462,96 +1279,17 @@ router.post("/pipeline-excel", async (req, res) => {
         right: { style: "thin" },
       },
     };
-    ["A", "B", "C", "D"].forEach((col) => {
-      const cell = summarySheet[col + totalRow];
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + totalRow];
       if (cell) cell.s = totalStyle;
     });
 
-    summarySheet["!merges"].push({
+    worksheet["!merges"].push({
       s: { r: totalRow - 1, c: 0 },
       e: { r: totalRow - 1, c: 1 },
     });
 
-    XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
-
-    if (data && data.length > 0) {
-      const detailData = [];
-      detailData.push([`${branch.toUpperCase()} PIPELINE REPORT - DETAILED`]);
-      detailData.push([
-        "SR NO.",
-        "EMPLOYEE",
-        "COMPANY",
-        "EMAIL",
-        "CONTACT",
-        "CREATED",
-        "EXPECTED REVENUE",
-      ]);
-
-      data.forEach((row, i) => {
-        detailData.push([
-          i + 1,
-          row.employee_name || "Unassigned",
-          row.company_name || "-",
-          row.email || "-",
-          row.contact || "-",
-          row.create_date
-            ? new Date(row.create_date).toLocaleDateString()
-            : "-",
-          row.expected_revenue || 0,
-        ]);
-      });
-
-      const detailSheet = XLSX.utils.aoa_to_sheet(detailData);
-
-      detailSheet["!cols"] = [
-        { wch: 8 },
-        { wch: 25 },
-        { wch: 30 },
-        { wch: 30 },
-        { wch: 15 },
-        { wch: 12 },
-        { wch: 18 },
-      ];
-
-      detailSheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
-
-      detailSheet["A1"].s = {
-        font: { bold: true, sz: 16, color: { rgb: "000000" } },
-        fill: { fgColor: { rgb: "FFFF00" } },
-        alignment: { horizontal: "center", vertical: "center" },
-        border: {
-          top: { style: "thin" },
-          left: { style: "thin" },
-          bottom: { style: "thin" },
-          right: { style: "thin" },
-        },
-      };
-      ["A2", "B2", "C2", "D2", "E2", "F2", "G2"].forEach((cell) => {
-        if (detailSheet[cell]) detailSheet[cell].s = headerStyle;
-      });
-
-      data.forEach((row, index) => {
-        const excelRow = index + 3;
-        const fillColor = index % 2 === 0 ? "CCFFCC" : "FFFFFF";
-
-        const style = {
-          fill: { fgColor: { rgb: fillColor } },
-          alignment: { horizontal: "center" },
-          border: {
-            top: { style: "thin" },
-            left: { style: "thin" },
-            bottom: { style: "thin" },
-            right: { style: "thin" },
-          },
-        };
-        ["A", "B", "C", "D", "E", "F", "G"].forEach((col) => {
-          const cell = detailSheet[col + excelRow];
-          if (cell) cell.s = style;
-        });
-      });
-
-      XLSX.utils.book_append_sheet(workbook, detailSheet, "Detailed");
-    }
+    XLSX.utils.book_append_sheet(workbook, worksheet, `${branch} Pipeline`);
 
     const buffer = XLSX.write(workbook, { type: "buffer" });
 
@@ -576,6 +1314,31 @@ router.post("/pipeline-excel", async (req, res) => {
     res.send(buffer);
   } catch (error) {
     console.error("Error in pipeline-excel:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/logs", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("download_logs")
+      .select(
+        `
+        *,
+        users:user_id (
+          username
+        )
+      `
+      )
+      .order("downloaded_at", { ascending: false })
+      .limit(100);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json(data);
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });

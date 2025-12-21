@@ -12,6 +12,7 @@ import downloadRoutes from "./routes/downloads.js";
 import messagingRoutes from "./routes/messaging.js";
 import pipelineRoutes from "./routes/pipeline.js";
 import agentRoutes from "./routes/agent.js";
+import dispoRoutes from "./routes/dispo.js";
 
 dotenv.config();
 
@@ -53,6 +54,7 @@ app.use("/api/downloads", downloadRoutes);
 app.use("/api/messaging", messagingRoutes);
 app.use("/api/pipeline", pipelineRoutes);
 app.use("/api/agent", agentRoutes);
+app.use("/api/dispo", dispoRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "API is running" });
