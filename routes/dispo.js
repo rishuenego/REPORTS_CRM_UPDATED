@@ -111,6 +111,8 @@ router.get("/report/:branch", async (req, res) => {
     pgConnection = await pgPool.connect();
 
     let crmDispos;
+    let crmUndisposedCount = 0;
+
     if (branch.toUpperCase() === "ALL") {
       // Fetch CRM dispositions from ALL branches (no branch filter)
       const { rows } = await pgConnection.query(
@@ -119,12 +121,26 @@ router.get("/report/:branch", async (req, res) => {
         FROM public.lean_manual_lead AS l
         LEFT JOIN public.dispo_list_name AS d ON l.disposition_id = d.id
         LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
-        WHERE d.name IS NOT NULL
-          AND h.name IS NOT NULL
-          AND DATE(l.write_date) = $1`,
+        WHERE h.name IS NOT NULL
+          AND DATE(l.write_date) = $1
+          AND d.name IS NOT NULL`,
         [reportDate]
       );
       crmDispos = rows;
+
+      // This matches the agent report logic where undisposed means disposition_id IS NULL
+      const { rows: undisposedRows } = await pgConnection.query(
+        `SELECT COUNT(*) AS undisposed_count
+        FROM public.lean_manual_lead AS l
+        LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
+        WHERE h.name IS NOT NULL
+          AND DATE(l.write_date) = $1
+          AND l.disposition_id IS NULL`,
+        [reportDate]
+      );
+      crmUndisposedCount = Number.parseInt(
+        undisposedRows[0]?.undisposed_count || 0
+      );
     } else {
       // Original branch-specific query
       const getBranchId = (b) => {
@@ -144,13 +160,27 @@ router.get("/report/:branch", async (req, res) => {
         FROM public.lean_manual_lead AS l
         LEFT JOIN public.dispo_list_name AS d ON l.disposition_id = d.id
         LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
-        WHERE d.name IS NOT NULL
-          AND h.name IS NOT NULL
+        WHERE h.name IS NOT NULL
           AND h.branch_id = $1
-          AND DATE(l.write_date) = $2`,
+          AND DATE(l.write_date) = $2
+          AND d.name IS NOT NULL`,
         [branchId, reportDate]
       );
       crmDispos = rows;
+
+      const { rows: undisposedRows } = await pgConnection.query(
+        `SELECT COUNT(*) AS undisposed_count
+        FROM public.lean_manual_lead AS l
+        LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
+        WHERE h.name IS NOT NULL
+          AND h.branch_id = $1
+          AND DATE(l.write_date) = $2
+          AND l.disposition_id IS NULL`,
+        [branchId, reportDate]
+      );
+      crmUndisposedCount = Number.parseInt(
+        undisposedRows[0]?.undisposed_count || 0
+      );
     }
 
     pgConnection.release();
@@ -164,13 +194,31 @@ router.get("/report/:branch", async (req, res) => {
       [reportDate]
     );
 
-    const [dialerMissedDispos] = await mysqlConnection.execute(
-      `SELECT disposition_name FROM call_logs.DialerMissed WHERE DATE(createdAt) = ?`,
+    // const [dialerMissedDispos] = await mysqlConnection.execute(
+    //   `SELECT disposition_name FROM call_logs.DialerMissed WHERE DATE(createdAt) = ?`,
+    //   [reportDate]
+    // );
+
+    // This matches the agent report logic
+    const [dialerUndisposedAns] = await mysqlConnection.execute(
+      `SELECT COUNT(*) AS undisposed_count FROM call_logs.DialerAns 
+       WHERE DATE(createdAt) = ? AND (disposition_name IS NULL OR TRIM(disposition_name) = '')`,
+      [reportDate]
+    );
+
+    const [dialerUndisposedMissed] = await mysqlConnection.execute(
+      `SELECT COUNT(*) AS undisposed_count FROM call_logs.DialerMissed 
+       WHERE DATE(createdAt) = ? AND (disposition_name IS NULL OR TRIM(disposition_name) = '')`,
       [reportDate]
     );
 
     mysqlConnection.release();
     mysqlConnection = null;
+
+    const dialerUndisposedCount = Number.parseInt(
+      dialerUndisposedAns[0]?.undisposed_count || 0
+    );
+    // Number.parseInt(dialerUndisposedMissed[0]?.undisposed_count || 0);
 
     // Process and aggregate dispositions
     const dispoCountsDialer = {};
@@ -182,20 +230,33 @@ router.get("/report/:branch", async (req, res) => {
       dispoCountsCRM[d] = 0;
     });
 
-    // Count Dialer dispositions
     dialerAnsDispos.forEach((row) => {
-      const mapped = mapDisposition(row.disposition_name, "DIALER");
-      if (dispoCountsDialer[mapped] !== undefined) {
-        dispoCountsDialer[mapped]++;
+      if (row.disposition_name && row.disposition_name.trim() !== "") {
+        const mapped = mapDisposition(row.disposition_name, "DIALER");
+        // Don't count UNDISPOSED here as we have separate count
+        if (
+          mapped !== "UNDISPOSED" &&
+          dispoCountsDialer[mapped] !== undefined
+        ) {
+          dispoCountsDialer[mapped]++;
+        }
       }
     });
 
-    dialerMissedDispos.forEach((row) => {
-      const mapped = mapDisposition(row.disposition_name, "DIALER");
-      if (dispoCountsDialer[mapped] !== undefined) {
-        dispoCountsDialer[mapped]++;
-      }
-    });
+    // dialerMissedDispos.forEach((row) => {
+    //   if (row.disposition_name && row.disposition_name.trim() !== "") {
+    //     const mapped = mapDisposition(row.disposition_name, "DIALER");
+    //     if (
+    //       mapped !== "UNDISPOSED" &&
+    //       dispoCountsDialer[mapped] !== undefined
+    //     ) {
+    //       dispoCountsDialer[mapped]++;
+    //     }
+    //   }
+    // });
+
+    // Set undisposed counts from the dedicated queries
+    dispoCountsDialer["UNDISPOSED"] = dialerUndisposedCount;
 
     // Count CRM dispositions
     crmDispos.forEach((row) => {
@@ -204,6 +265,8 @@ router.get("/report/:branch", async (req, res) => {
         dispoCountsCRM[mapped]++;
       }
     });
+
+    dispoCountsCRM["UNDISPOSED"] = crmUndisposedCount;
 
     // Build response data
     const data = DISPO_ORDER.map((dispo) => ({

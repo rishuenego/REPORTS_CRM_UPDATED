@@ -76,6 +76,10 @@ router.post("/talktime-excel", async (req, res) => {
       branchHeader += "MASTER CALL REPORT";
     } else {
       branchHeader += "DIALER TALK TIME REPORT";
+      // Add threshold info to header if provided for DIALER report
+      if (talktimeThreshold) {
+        branchHeader += ` (Threshold: ${talktimeThreshold})`;
+      }
     }
     worksheetData.push([branchHeader]);
 
@@ -159,6 +163,7 @@ router.post("/talktime-excel", async (req, res) => {
         grandTotals?.crmCalls || grandTotals?.totalCalls || 0,
       ]);
     } else {
+      // DIALER report
       worksheetData.push([
         "SR NO.",
         "NAME",
@@ -374,27 +379,65 @@ router.post("/talktime-excel", async (req, res) => {
         if (cell) cell.s = headerStyle;
       });
 
-      data.forEach((row, index) => {
-        const excelRow = index + 3;
-        const position = (index / data.length) * 100;
-        const fillColor = position < 50 ? "CCFFCC" : "FFCCCC";
+      if (reportType === "DIALER" && talktimeThreshold) {
+        const thresholdMinutes = convertTimeToMinutes(talktimeThreshold);
 
-        const style = {
-          fill: { fgColor: { rgb: fillColor } },
-          alignment: { horizontal: "center" },
-          border: {
-            top: { style: "thin" },
-            left: { style: "thin" },
-            bottom: { style: "thin" },
-            right: { style: "thin" },
-          },
-        };
+        data.forEach((row, index) => {
+          const excelRow = index + 3;
+          const agentTalktimeMinutes = convertTimeToMinutes(row.TALK_TIME);
 
-        cols.forEach((col) => {
-          const cell = worksheet[col + excelRow];
-          if (cell) cell.s = style;
+          // Green if above threshold, Red if below threshold
+          let fillColor;
+          let fontColor = "000000"; // Black text by default
+
+          if (agentTalktimeMinutes >= thresholdMinutes) {
+            fillColor = "92D050"; // Green - Above threshold
+          } else {
+            fillColor = "FF0000"; // Red - Below threshold
+            fontColor = "FFFFFF"; // White text for red background
+          }
+
+          const style = {
+            font: { color: { rgb: fontColor } },
+            fill: { fgColor: { rgb: fillColor } },
+            alignment: { horizontal: "center" },
+            border: {
+              top: { style: "thin" },
+              left: { style: "thin" },
+              bottom: { style: "thin" },
+              right: { style: "thin" },
+            },
+          };
+
+          cols.forEach((col) => {
+            const cell = worksheet[col + excelRow];
+            if (cell) cell.s = style;
+          });
         });
-      });
+      } else {
+        // Original styling for CRM and non-threshold DIALER reports
+        data.forEach((row, index) => {
+          const excelRow = index + 3;
+          const position = (index / data.length) * 100;
+          const fillColor = position < 50 ? "CCFFCC" : "FFCCCC";
+
+          const style = {
+            fill: { fgColor: { rgb: fillColor } },
+            alignment: { horizontal: "center" },
+            border: {
+              top: { style: "thin" },
+              left: { style: "thin" },
+              bottom: { style: "thin" },
+              right: { style: "thin" },
+            },
+          };
+
+          cols.forEach((col) => {
+            const cell = worksheet[col + excelRow];
+            if (cell) cell.s = style;
+          });
+        });
+      }
 
       const totalRow = worksheetData.length;
       const totalStyle = {
