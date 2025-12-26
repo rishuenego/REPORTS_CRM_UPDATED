@@ -14,6 +14,7 @@ import messagingRoutes from "./routes/messaging.js";
 import pipelineRoutes from "./routes/pipeline.js";
 import agentRoutes from "./routes/agent.js";
 import dispoRoutes from "./routes/dispo.js";
+import paymentLinksRoutes from "./routes/paymentLinks.js";
 
 dotenv.config();
 
@@ -23,16 +24,16 @@ const PORT = process.env.PORT || 5000;
 app.set("trust proxy", 1);
 
 const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: { error: "Too many requests, please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each IP to 10 login attempts per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 10,
   message: { error: "Too many login attempts, please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
@@ -42,7 +43,6 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Apply general rate limiting to all routes
 app.use(generalLimiter);
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
@@ -69,7 +69,6 @@ export const pgPool = new pg.Pool({
   connectionTimeoutMillis: 2000,
 });
 
-// Apply stricter rate limiting to auth routes
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/talktime", talktimeRoutes);
@@ -78,6 +77,7 @@ app.use("/api/messaging", messagingRoutes);
 app.use("/api/pipeline", pipelineRoutes);
 app.use("/api/agent", agentRoutes);
 app.use("/api/dispo", dispoRoutes);
+app.use("/api/payment-links", paymentLinksRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "API is running" });
