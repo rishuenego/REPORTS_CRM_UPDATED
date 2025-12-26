@@ -1,5 +1,6 @@
 import express from "express";
-import { mysqlPool, pgPool } from "../index.js";
+import { mysqlPool, pgPool, supabase } from "../index.js";
+import XLSX from "xlsx-js-style";
 
 const router = express.Router();
 
@@ -82,7 +83,6 @@ router.get("/report", async (req, res) => {
     const showPendingBool = showPending === "true" || showPending === true;
 
     if (!showPaidBool && !showPendingBool) {
-      // If both are false, show nothing (or you could show all)
       filteredData = [];
     } else if (!showPaidBool) {
       filteredData = filteredData.filter((row) => row.status === "pending");
@@ -138,122 +138,385 @@ router.get("/report", async (req, res) => {
   }
 });
 
-// Download payment links report as Excel
+router.get("/status-report", async (req, res) => {
+  let mysqlConnection = null;
+  let pgConnection = null;
+
+  try {
+    const { startDate, endDate } = req.query;
+
+    const start =
+      startDate ||
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+        .toISOString()
+        .split("T")[0];
+    const end = endDate || new Date().toISOString().split("T")[0];
+
+    // Get employee branch mapping from PostgreSQL
+    pgConnection = await pgPool.connect();
+
+    const { rows: employees } = await pgConnection.query(
+      `SELECT id, name, branch_id FROM public.hr_employee ORDER BY id ASC`
+    );
+
+    pgConnection.release();
+    pgConnection = null;
+
+    // Create employee name to branch mapping (more flexible matching)
+    const employeeBranchMap = new Map();
+    employees.forEach((emp) => {
+      if (emp.name) {
+        // Store both full name and trimmed version
+        employeeBranchMap.set(emp.name.toLowerCase().trim(), emp.branch_id);
+      }
+    });
+
+    // Fetch ALL payment data from MySQL (both link generated and received)
+    mysqlConnection = await mysqlPool.getConnection();
+
+    // Query for payment links - link generated is total amount, received is when status is null/empty
+    const [paymentRows] = await mysqlConnection.execute(
+      `SELECT 
+        e.name AS employee_name,
+        r.amount,
+        DATE(r.created_at) AS date,
+        r.status
+      FROM razorpay.payment_requests AS r
+      LEFT JOIN razorpay.employees AS e ON e.id = r.employee_id
+      WHERE DATE(r.created_at) BETWEEN ? AND ?
+      ORDER BY DATE(r.created_at) ASC`,
+      [start, end]
+    );
+
+    mysqlConnection.release();
+    mysqlConnection = null;
+
+    // Group data by date and branch
+    const dateMap = new Map();
+
+    paymentRows.forEach((row) => {
+      if (!row.date) return;
+
+      const dateKey = new Date(row.date).toISOString().split("T")[0];
+
+      if (!dateMap.has(dateKey)) {
+        dateMap.set(dateKey, {
+          date: dateKey,
+          ahm_link_generated: 0,
+          ahm_rec_amount: 0,
+          chennai_link_generated: 0,
+          chennai_rec_amount: 0,
+          noida_link_generated: 0,
+          noida_rec_amount: 0,
+          total_link_generated: 0,
+          total_rec_amount: 0,
+          pending: 0,
+        });
+      }
+
+      const dayData = dateMap.get(dateKey);
+      const amount = Number(row.amount) || 0;
+      const empName = row.employee_name?.toLowerCase().trim() || "";
+
+      // Check if payment was received (status is null or empty means received)
+      const isReceived =
+        row.status === null || row.status === "" || row.status === "received";
+
+      // Find which branch this employee belongs to
+      let branchId = null;
+
+      // Try exact match first
+      if (employeeBranchMap.has(empName)) {
+        branchId = employeeBranchMap.get(empName);
+      } else {
+        // Try partial match
+        for (const [name, bId] of employeeBranchMap.entries()) {
+          if (empName.includes(name) || name.includes(empName)) {
+            branchId = bId;
+            break;
+          }
+        }
+      }
+
+      // Branch IDs: 1 = AHM, 2 = NOIDA, 3 = CHENNAI
+      // LINK GENERATED = Sum of ALL amounts for that date (total links created)
+      // REC AMOUNT = Sum of amounts where status is received
+
+      if (branchId === 1) {
+        // AHMEDABAD
+        dayData.ahm_link_generated += amount;
+        if (isReceived) {
+          dayData.ahm_rec_amount += amount;
+        }
+      } else if (branchId === 3) {
+        // CHENNAI
+        dayData.chennai_link_generated += amount;
+        if (isReceived) {
+          dayData.chennai_rec_amount += amount;
+        }
+      } else if (branchId === 2) {
+        // NOIDA
+        dayData.noida_link_generated += amount;
+        if (isReceived) {
+          dayData.noida_rec_amount += amount;
+        }
+      }
+
+      // Add to totals
+      dayData.total_link_generated += amount;
+      if (isReceived) {
+        dayData.total_rec_amount += amount;
+      }
+    });
+
+    // Calculate pending for each date (LINK GENERATED - REC AMOUNT)
+    dateMap.forEach((day) => {
+      day.pending = day.total_link_generated - day.total_rec_amount;
+    });
+
+    // Sort by date and convert to array
+    const data = Array.from(dateMap.values()).sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+
+    // Calculate grand totals
+    const grandTotals = {
+      ahm_link_generated: 0,
+      ahm_rec_amount: 0,
+      chennai_link_generated: 0,
+      chennai_rec_amount: 0,
+      noida_link_generated: 0,
+      noida_rec_amount: 0,
+      total_link_generated: 0,
+      total_rec_amount: 0,
+      pending: 0,
+    };
+
+    data.forEach((day) => {
+      grandTotals.ahm_link_generated += day.ahm_link_generated;
+      grandTotals.ahm_rec_amount += day.ahm_rec_amount;
+      grandTotals.chennai_link_generated += day.chennai_link_generated;
+      grandTotals.chennai_rec_amount += day.chennai_rec_amount;
+      grandTotals.noida_link_generated += day.noida_link_generated;
+      grandTotals.noida_rec_amount += day.noida_rec_amount;
+      grandTotals.total_link_generated += day.total_link_generated;
+      grandTotals.total_rec_amount += day.total_rec_amount;
+    });
+
+    // Calculate grand total pending
+    grandTotals.pending =
+      grandTotals.total_link_generated - grandTotals.total_rec_amount;
+
+    console.log(
+      `[PaymentStatus] Found ${data.length} days of data from ${start} to ${end}`
+    );
+
+    res.json({ data, grandTotals });
+  } catch (error) {
+    console.error("Payment Status Report Error:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (mysqlConnection) {
+      try {
+        mysqlConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    if (pgConnection) {
+      try {
+        pgConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+});
+
 router.post("/download", async (req, res) => {
   try {
-    const { data, summary, branches, startDate, endDate } = req.body;
+    const { data, summary, branches, startDate, endDate, user_id } = req.body;
 
-    // Using ExcelJS for Excel generation
-    const ExcelJS = await import("exceljs");
-    const workbook = new ExcelJS.default.Workbook();
-    const worksheet = workbook.addWorksheet("Payment Links Report");
+    if (!data || data.length === 0) {
+      return res.status(400).json({ error: "No data to download" });
+    }
 
-    // Title
-    worksheet.mergeCells("A1:E1");
-    worksheet.getCell("A1").value = `Payment Links Report - ${branches}`;
-    worksheet.getCell("A1").font = { size: 16, bold: true };
-    worksheet.getCell("A1").alignment = { horizontal: "center" };
+    const workbook = XLSX.utils.book_new();
+    const worksheetData = [];
 
-    // Date range
-    worksheet.mergeCells("A2:E2");
-    worksheet.getCell("A2").value = `Period: ${startDate} to ${endDate}`;
-    worksheet.getCell("A2").alignment = { horizontal: "center" };
+    // Title row
+    worksheetData.push([`Payment Links Report - ${branches}`]);
 
-    // Headers
-    const headerRow = worksheet.addRow([
-      "SR NO.",
-      "EMPLOYEE NAME",
-      "AMOUNT",
-      "DATE",
-      "STATUS",
-    ]);
-    headerRow.eachCell((cell) => {
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFFACC15" },
-      };
-      cell.font = { bold: true };
-      cell.border = {
-        top: { style: "thin" },
-        left: { style: "thin" },
-        bottom: { style: "thin" },
-        right: { style: "thin" },
-      };
-    });
+    // Date range row
+    worksheetData.push([`Period: ${startDate} to ${endDate}`]);
+
+    // Empty row
+    worksheetData.push([]);
+
+    // Header row
+    worksheetData.push(["SR NO.", "EMPLOYEE NAME", "AMOUNT", "DATE", "STATUS"]);
 
     // Data rows
     data.forEach((row, index) => {
-      const dataRow = worksheet.addRow([
+      worksheetData.push([
         index + 1,
         row.employee_name || "Unknown",
         row.amount,
         row.date,
         row.status === "received" ? "Received" : "Pending",
       ]);
-
-      dataRow.eachCell((cell, colNumber) => {
-        cell.border = {
-          top: { style: "thin" },
-          left: { style: "thin" },
-          bottom: { style: "thin" },
-          right: { style: "thin" },
-        };
-
-        // Color code status
-        if (colNumber === 5) {
-          if (row.status === "received") {
-            cell.fill = {
-              type: "pattern",
-              pattern: "solid",
-              fgColor: { argb: "FF22C55E" },
-            };
-            cell.font = { color: { argb: "FFFFFFFF" } };
-          } else {
-            cell.fill = {
-              type: "pattern",
-              pattern: "solid",
-              fgColor: { argb: "FFEAB308" },
-            };
-          }
-        }
-      });
     });
 
     // Summary row
-    const summaryRow = worksheet.addRow([
-      "",
+    worksheetData.push([
       "GRAND TOTAL",
+      "",
       summary.totalAmount,
       "",
       `${data.length} Records`,
     ]);
-    summaryRow.eachCell((cell) => {
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FFFACC15" },
-      };
-      cell.font = { bold: true };
-      cell.border = {
-        top: { style: "thin" },
-        left: { style: "thin" },
-        bottom: { style: "thin" },
-        right: { style: "thin" },
-      };
-    });
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
 
     // Column widths
-    worksheet.columns = [
-      { width: 10 },
-      { width: 30 },
-      { width: 15 },
-      { width: 15 },
-      { width: 12 },
+    worksheet["!cols"] = [
+      { wch: 10 },
+      { wch: 30 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 12 },
     ];
 
-    // Write to buffer
-    const buffer = await workbook.xlsx.writeBuffer();
+    // Merge title cells
+    worksheet["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
+    ];
+
+    // Style definitions
+    const titleStyle = {
+      font: { bold: true, sz: 16, color: { rgb: "000000" } },
+      fill: { fgColor: { rgb: "FACC15" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    const dateRangeStyle = {
+      font: { sz: 12 },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    const headerStyle = {
+      font: { bold: true, color: { rgb: "000000" } },
+      fill: { fgColor: { rgb: "FACC15" } },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    // Apply title style
+    if (worksheet["A1"]) worksheet["A1"].s = titleStyle;
+    if (worksheet["A2"])
+      worksheet["A2"].s = dateRangeStyle;
+
+      // Apply header styles
+    ["A4", "B4", "C4", "D4", "E4"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = headerStyle;
+    });
+
+    // Data row styles
+    data.forEach((row, index) => {
+      const excelRow = index + 5;
+      const fillColor = index % 2 === 0 ? "FFFFFF" : "F8FAFC";
+
+      const style = {
+        fill: { fgColor: { rgb: fillColor } },
+        alignment: { horizontal: "center" },
+        border: {
+          top: { style: "thin", color: { rgb: "000000" } },
+          left: { style: "thin", color: { rgb: "000000" } },
+          bottom: { style: "thin", color: { rgb: "000000" } },
+          right: { style: "thin", color: { rgb: "000000" } },
+        },
+      };
+      ["A", "B", "C", "D"].forEach((col) => {
+        const cell = worksheet[col + excelRow];
+        if (cell) cell.s = style;
+      });
+
+      // Status cell with color
+      const statusCell = worksheet["E" + excelRow];
+      if (statusCell) {
+        statusCell.s = {
+          font: {
+            color: { rgb: row.status === "received" ? "FFFFFF" : "000000" },
+          },
+          fill: {
+            fgColor: { rgb: row.status === "received" ? "22C55E" : "EAB308" },
+          },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin", color: { rgb: "000000" } },
+            left: { style: "thin", color: { rgb: "000000" } },
+            bottom: { style: "thin", color: { rgb: "000000" } },
+            right: { style: "thin", color: { rgb: "000000" } },
+          },
+        };
+      }
+    });
+
+    // Grand total row style
+    const totalRow = data.length + 5;
+    const totalStyle = {
+      font: { bold: true, color: { rgb: "000000" } },
+      fill: { fgColor: { rgb: "FACC15" } },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + totalRow];
+      if (cell) cell.s = totalStyle;
+    });
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Payment Links");
+
+    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+    // Log download
+    if (user_id) {
+      try {
+        await supabase.from("download_logs").insert([
+          {
+            user_id,
+            branch: branches,
+            report_type: "payment_links",
+            downloaded_at: new Date().toISOString(),
+          },
+        ]);
+      } catch (logError) {
+        console.error("Failed to log download:", logError);
+      }
+    }
 
     res.setHeader(
       "Content-Type",
@@ -261,11 +524,249 @@ router.post("/download", async (req, res) => {
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=Payment_Links_Report.xlsx`
+      `attachment; filename=Payment_Links_Report_${startDate}_to_${endDate}.xlsx`
     );
     res.send(Buffer.from(buffer));
   } catch (error) {
     console.error("Download Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/download-status", async (req, res) => {
+  try {
+    const { data, grandTotals, startDate, endDate, user_id } = req.body;
+
+    if (!data || data.length === 0) {
+      return res.status(400).json({ error: "No data to download" });
+    }
+
+    const workbook = XLSX.utils.book_new();
+    const worksheetData = [];
+
+    // Row 1: Title - PAYMENT STATUS
+    worksheetData.push([
+      "PAYMENT STATUS",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ]);
+
+    // Row 2: Location headers
+    worksheetData.push([
+      "SR NO.",
+      "DATE",
+      "AHMEDABAD",
+      "",
+      "CHENNAI",
+      "",
+      "NOIDA",
+      "",
+      "TOTAL",
+      "",
+      "",
+    ]);
+
+    // Row 3: Sub headers
+    worksheetData.push([
+      "",
+      "",
+      "TOTAL LINK GENRATED",
+      "REC AMOUNT",
+      "LINK GENRATED",
+      "REC AMOUNT",
+      "LINK GENRATED",
+      "REC AMOUNT",
+      "LINK GENRATED",
+      "REC AMOUNT",
+      "PENDIG",
+    ]);
+
+    // Data rows
+    data.forEach((row, index) => {
+      const date = new Date(row.date);
+      const dateStr = `${date.getDate()}-${date.toLocaleString("en-US", {
+        month: "short",
+      })}`;
+      worksheetData.push([
+        index + 1,
+        dateStr,
+        row.ahm_link_generated || 0,
+        row.ahm_rec_amount || "",
+        row.chennai_link_generated || 0,
+        row.chennai_rec_amount || "",
+        row.noida_link_generated || 0,
+        row.noida_rec_amount || "",
+        row.total_link_generated || 0,
+        row.total_rec_amount || 0,
+        row.pending || 0,
+      ]);
+    });
+
+    // Grand total row
+    worksheetData.push([
+      "GRAND TOTAL",
+      "",
+      grandTotals.ahm_link_generated || 0,
+      grandTotals.ahm_rec_amount || 0,
+      grandTotals.chennai_link_generated || 0,
+      grandTotals.chennai_rec_amount || 0,
+      grandTotals.noida_link_generated || 0,
+      grandTotals.noida_rec_amount || 0,
+      grandTotals.total_link_generated || 0,
+      grandTotals.total_rec_amount || 0,
+      grandTotals.pending || 0,
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+
+    // Column widths
+    worksheet["!cols"] = [
+      { wch: 10 }, // SR NO
+      { wch: 10 }, // DATE
+      { wch: 18 }, // AHM LINK
+      { wch: 14 }, // AHM REC
+      { wch: 16 }, // CHENNAI LINK
+      { wch: 14 }, // CHENNAI REC
+      { wch: 16 }, // NOIDA LINK
+      { wch: 14 }, // NOIDA REC
+      { wch: 16 }, // TOTAL LINK
+      { wch: 14 }, // TOTAL REC
+      { wch: 14 }, // PENDING
+    ];
+
+    // Merges
+    worksheet["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }, // Title row
+      { s: { r: 1, c: 2 }, e: { r: 1, c: 3 } }, // AHMEDABAD
+      { s: { r: 1, c: 4 }, e: { r: 1, c: 5 } }, // CHENNAI
+      { s: { r: 1, c: 6 }, e: { r: 1, c: 7 } }, // NOIDA
+      { s: { r: 1, c: 8 }, e: { r: 1, c: 10 } }, // TOTAL
+      { s: { r: data.length + 3, c: 0 }, e: { r: data.length + 3, c: 1 } }, // Grand Total label
+    ];
+
+    // Style definitions
+    const greenStyle = {
+      font: { bold: true, sz: 12, color: { rgb: "000000" } },
+      fill: { fgColor: { rgb: "92D050" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    const yellowStyle = {
+      font: { bold: true, color: { rgb: "000000" } },
+      fill: { fgColor: { rgb: "FFFF00" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    const blueStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "00B0F0" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    const dataStyle = {
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    // Apply title row (row 1) - Green
+    const cols = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"];
+    cols.forEach((col) => {
+      const cell = worksheet[col + "1"];
+      if (cell) cell.s = greenStyle;
+    });
+
+    // Apply row 2 styles - SR NO and DATE green, rest yellow
+    ["A2", "B2"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = greenStyle;
+    });
+    ["C2", "D2", "E2", "F2", "G2", "H2", "I2", "J2", "K2"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = yellowStyle;
+    });
+
+    // Apply row 3 styles (sub-headers) - Green
+    cols.forEach((col) => {
+      const cell = worksheet[col + "3"];
+      if (cell) worksheet[col + "3"].s = greenStyle;
+    });
+
+    // Apply data row styles (rows 4 to n)
+    data.forEach((row, index) => {
+      const excelRow = index + 4;
+      cols.forEach((col) => {
+        const cell = worksheet[col + excelRow];
+        if (cell) cell.s = dataStyle;
+      });
+    });
+
+    // Apply grand total row style - Blue
+    const totalRow = data.length + 4;
+    cols.forEach((col) => {
+      const cell = worksheet[col + totalRow];
+      if (cell) cell.s = blueStyle;
+    });
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Payment Status");
+
+    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+    // Log download
+    if (user_id) {
+      try {
+        await supabase.from("download_logs").insert([
+          {
+            user_id,
+            branch: "ALL",
+            report_type: "payment_status",
+            downloaded_at: new Date().toISOString(),
+          },
+        ]);
+      } catch (logError) {
+        console.error("Failed to log download:", logError);
+      }
+    }
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Payment_Status_Report_${startDate}_to_${endDate}.xlsx`
+    );
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    console.error("Download Status Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
