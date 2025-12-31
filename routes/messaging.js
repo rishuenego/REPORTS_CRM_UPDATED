@@ -1,5 +1,6 @@
 import express from "express";
 import { mysqlPool } from "../index.js";
+import fetch from "node-fetch";
 
 const router = express.Router();
 
@@ -31,7 +32,7 @@ router.get("/users", async (req, res) => {
     mysqlConnection = await mysqlPool.getConnection();
 
     const [users] = await mysqlConnection.execute(
-      `SELECT id, name, phone, branch FROM agents_data.Users_details ORDER BY branch, name`
+      `SELECT id, name, phone, branch, designation FROM agents_data.Users_details ORDER BY branch, name`
     );
 
     mysqlConnection.release();
@@ -81,7 +82,7 @@ router.get("/users/:branch", async (req, res) => {
     const { branch } = req.params;
     mysqlConnection = await mysqlPool.getConnection();
 
-    let query = `SELECT id, name, phone, branch FROM agents_data.Users_details`;
+    let query = `SELECT id, name, phone, branch, designation FROM agents_data.Users_details`;
     const params = [];
 
     if (branch.toUpperCase() !== "ALL") {
@@ -326,10 +327,10 @@ router.get("/users/search/:query", async (req, res) => {
     mysqlConnection = await mysqlPool.getConnection();
 
     const [users] = await mysqlConnection.execute(
-      `SELECT id, name, phone, branch FROM agents_data.Users_details 
-       WHERE name LIKE ? OR phone LIKE ? OR branch LIKE ?
+      `SELECT id, name, phone, branch, designation FROM agents_data.Users_details 
+       WHERE name LIKE ? OR phone LIKE ? OR branch LIKE ? OR designation LIKE ?
        ORDER BY name`,
-      [`%${query}%`, `%${query}%`, `%${query}%`]
+      [`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`]
     );
 
     mysqlConnection.release();
@@ -353,6 +354,7 @@ router.get("/users/search/:query", async (req, res) => {
     }
   }
 });
+
 router.post("/send-broadcast", async (req, res) => {
   try {
     const { fromNumber, message, users, excludedIds = [] } = req.body;

@@ -1,5 +1,4 @@
--- Create Users_details table for message broadcasting
--- Run this script in your MySQL database (agents_data schema)
+
 
 CREATE DATABASE IF NOT EXISTS agents_data;
 
@@ -17,8 +16,4 @@ CREATE TABLE IF NOT EXISTS Users_details (
   INDEX idx_name (name)
 );
 
--- Sample data (optional)
--- INSERT INTO Users_details (name, phone, branch) VALUES
--- ('John Doe', '9876543210', 'NOIDA'),
--- ('Jane Smith', '9876543211', 'AHM'),
--- ('Bob Wilson', '9876543212', 'CHENNAI');
+
