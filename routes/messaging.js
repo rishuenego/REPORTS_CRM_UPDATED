@@ -1,5 +1,5 @@
 import express from "express";
-import { mysqlPool } from "../index.js";
+import { mysqlPool, pgPool } from "../index.js";
 import fetch from "node-fetch";
 
 const router = express.Router();
@@ -24,6 +24,126 @@ const getWhatsAppApiUrl = () => {
     "https://api-ping.blutec.ai/api/whatsapp/send-bulk-message"
   );
 };
+
+router.get("/birthdays/all", async (req, res) => {
+  let pgConnection = null;
+
+  try {
+    pgConnection = await pgPool.connect();
+
+    const { rows } = await pgConnection.query(`
+      SELECT 
+        name AS employee_name,
+        birthday AS date_of_birth,
+        CASE 
+          WHEN TO_CHAR(birthday, 'MM-DD') = TO_CHAR(CURRENT_DATE, 'MM-DD') THEN true
+          ELSE false
+        END AS is_today,
+        CASE 
+          WHEN TO_CHAR(birthday, 'MM-DD') = TO_CHAR(CURRENT_DATE + INTERVAL '1 day', 'MM-DD') THEN true
+          ELSE false
+        END AS is_tomorrow
+      FROM hr_employee
+      WHERE birthday IS NOT NULL
+      ORDER BY 
+        EXTRACT(MONTH FROM birthday),
+        EXTRACT(DAY FROM birthday),
+        name
+    `);
+
+    pgConnection.release();
+    pgConnection = null;
+
+    const birthdays = rows.map((row) => ({
+      name: row.employee_name,
+      date_of_birth: row.date_of_birth,
+      isToday: row.is_today,
+      isTomorrow: row.is_tomorrow,
+    }));
+
+    res.json({
+      success: true,
+      birthdays,
+      todayCount: birthdays.filter((b) => b.isToday).length,
+      tomorrowCount: birthdays.filter((b) => b.isTomorrow).length,
+      total: birthdays.length,
+    });
+  } catch (error) {
+    console.error("Error fetching all birthdays:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (pgConnection) {
+      try {
+        pgConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+});
+
+router.get("/birthdays", async (req, res) => {
+  let pgConnection = null;
+
+  try {
+    pgConnection = await pgPool.connect();
+
+    const { rows } = await pgConnection.query(`
+      SELECT 
+        name AS employee_name,
+        birthday AS date_of_birth,
+        CASE 
+          WHEN TO_CHAR(birthday, 'MM-DD') = TO_CHAR(CURRENT_DATE, 'MM-DD') THEN true
+          ELSE false
+        END AS is_today,
+        CASE 
+          WHEN TO_CHAR(birthday, 'MM-DD') = TO_CHAR(CURRENT_DATE + INTERVAL '1 day', 'MM-DD') THEN true
+          ELSE false
+        END AS is_tomorrow
+      FROM hr_employee
+      WHERE birthday IS NOT NULL 
+        AND (
+          TO_CHAR(birthday, 'MM-DD') = TO_CHAR(CURRENT_DATE, 'MM-DD')
+          OR TO_CHAR(birthday, 'MM-DD') = TO_CHAR(CURRENT_DATE + INTERVAL '1 day', 'MM-DD')
+        )
+      ORDER BY 
+        CASE 
+          WHEN TO_CHAR(birthday, 'MM-DD') = TO_CHAR(CURRENT_DATE, 'MM-DD') THEN 0
+          ELSE 1
+        END,
+        name
+    `);
+
+    pgConnection.release();
+    pgConnection = null;
+
+    const birthdays = rows.map((row) => ({
+      name: row.employee_name,
+      date_of_birth: row.date_of_birth,
+      isToday: row.is_today,
+      isTomorrow: row.is_tomorrow,
+    }));
+
+    res.json({
+      success: true,
+      birthdays,
+      todayCount: birthdays.filter((b) => b.isToday).length,
+      tomorrowCount: birthdays.filter((b) => b.isTomorrow).length,
+      total: birthdays.length,
+    });
+  } catch (error) {
+    console.error("Error fetching birthdays:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (pgConnection) {
+      try {
+        pgConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+});
 
 router.get("/users", async (req, res) => {
   let mysqlConnection = null;
@@ -129,7 +249,6 @@ router.post("/users", async (req, res) => {
         .json({ error: "Name, phone and branch are required" });
     }
 
-    // Validate phone number format
     const formattedPhone = formatPhoneNumber(phone);
     if (!formattedPhone || formattedPhone.length < 10) {
       return res.status(400).json({ error: "Invalid phone number format" });
@@ -137,7 +256,6 @@ router.post("/users", async (req, res) => {
 
     mysqlConnection = await mysqlPool.getConnection();
 
-    // Check if phone already exists
     const [existing] = await mysqlConnection.execute(
       `SELECT id FROM agents_data.Users_details WHERE phone = ?`,
       [phone]
@@ -195,7 +313,6 @@ router.put("/users/:id", async (req, res) => {
 
     mysqlConnection = await mysqlPool.getConnection();
 
-    // Check if phone already exists for another user
     const [existing] = await mysqlConnection.execute(
       `SELECT id FROM agents_data.Users_details WHERE phone = ? AND id != ?`,
       [phone, id]
@@ -355,6 +472,92 @@ router.get("/users/search/:query", async (req, res) => {
   }
 });
 
+router.post("/send-to-group", async (req, res) => {
+  try {
+    const { groupId, message, mentions = [] } = req.body;
+
+    if (!groupId) {
+      return res.status(400).json({ error: "Group ID is required" });
+    }
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: "Message is required" });
+    }
+
+    const apiUrl =
+      process.env.WHATSAPP_GROUP_API_URL ||
+      "https://api-ping.blutec.ai/api/whatsapp/send-group-message";
+    const instanceId = process.env.WHATSAPP_INSTANCE_ID || "SS0BOU";
+
+    console.log("Sending to WhatsApp group:", groupId);
+    console.log("Message:", message);
+    console.log("Mentions:", mentions);
+
+    const payload = {
+      instance_id: instanceId,
+      group_id: groupId,
+      message: message,
+      message_type: "text",
+      mentions: mentions.map((num) => {
+        // Format mention numbers (remove +, ensure it's just digits)
+        return num.replace(/[^0-9]/g, "");
+      }),
+    };
+
+    console.log("Payload:", JSON.stringify(payload));
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${WHATSAPP_API_TOKEN}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    console.log(`Response status: ${response.status}`);
+
+    const contentType = response.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+      const textResponse = await response.text();
+      console.error("Non-JSON response:", textResponse);
+
+      // If status is OK but not JSON, consider it success
+      if (response.ok) {
+        return res.json({
+          success: true,
+          message: "Message sent to group successfully",
+        });
+      }
+
+      throw new Error(
+        `API returned non-JSON response: ${
+          response.status
+        } - ${textResponse.substring(0, 200)}`
+      );
+    }
+
+    const result = await response.json();
+    console.log("API Response:", result);
+
+    if (
+      response.ok &&
+      (result.message || result.status === "success" || result.success)
+    ) {
+      res.json({
+        success: true,
+        message: "Message sent to group successfully",
+        result,
+      });
+    } else {
+      throw new Error(result.error || result.message || JSON.stringify(result));
+    }
+  } catch (error) {
+    console.error("Error sending to group:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/send-broadcast", async (req, res) => {
   try {
     const { fromNumber, message, users, excludedIds = [] } = req.body;
@@ -431,7 +634,6 @@ router.post("/send-broadcast", async (req, res) => {
           console.log(`Response status: ${response.status}`);
           console.log(`Response headers:`, response.headers);
 
-          // Check if response is JSON before parsing
           const contentType = response.headers.get("content-type");
           if (!contentType || !contentType.includes("application/json")) {
             const textResponse = await response.text();
@@ -491,7 +693,6 @@ router.get("/contacts/:branch", async (req, res) => {
   try {
     const { branch } = req.params;
 
-    // Redirect to new users endpoint
     const response = await fetch(
       `http://localhost:${
         process.env.PORT || 5000
@@ -499,7 +700,6 @@ router.get("/contacts/:branch", async (req, res) => {
     );
     const data = await response.json();
 
-    // Transform to old format for backward compatibility
     res.json({
       branch,
       contacts:
@@ -523,7 +723,6 @@ router.post("/send", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Transform contacts to users format
     const users = contacts.map((c, index) => ({
       id: index,
       name: c.name,
@@ -531,7 +730,6 @@ router.post("/send", async (req, res) => {
       branch: c.branch,
     }));
 
-    // Use new broadcast endpoint logic
     const results = {
       success: [],
       failed: [],

@@ -1361,6 +1361,381 @@ router.post("/pipeline-excel", async (req, res) => {
   }
 });
 
+router.post("/merged-dispo-excel", async (req, res) => {
+  try {
+    const { data, user_id, summary, date } = req.body;
+
+    if (!data || !user_id) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const workbook = XLSX.utils.book_new();
+    const worksheetData = [];
+
+    // Format date for title
+    const reportDate = new Date(date);
+    const day = reportDate.getDate();
+    const suffix =
+      day === 1 || day === 21 || day === 31
+        ? "ST"
+        : day === 2 || day === 22
+        ? "ND"
+        : day === 3 || day === 23
+        ? "RD"
+        : "TH";
+    const month = reportDate
+      .toLocaleString("en-US", { month: "short" })
+      .toUpperCase();
+    const year = reportDate.getFullYear();
+    const dateTitle = `${day}${suffix} ${month} ${year}`;
+
+    // Title row
+    worksheetData.push([`DISPO REPORT OF ${dateTitle} TILL TIME`]);
+
+    // Header row 1 - Branch names
+    worksheetData.push([
+      "",
+      "",
+      "NOIDA",
+      "",
+      "AMD",
+      "",
+      "CHENNAI",
+      "",
+      "TOTAL CALLS",
+    ]);
+
+    // Header row 2 - Sub headers
+    worksheetData.push([
+      "SR NO",
+      "DISPO",
+      "DIALER CALLS",
+      "CRM CALLS",
+      "DIALER CALLS",
+      "CRM CALLS",
+      "DIALER CALLS",
+      "CRM CALLS",
+      "",
+    ]);
+
+    // Data rows
+    data.forEach((row, i) => {
+      worksheetData.push([
+        i + 1,
+        row.DISPO,
+        row.NOIDA_DIALER || 0,
+        row.NOIDA_CRM || 0,
+        row.AMD_DIALER || 0,
+        row.AMD_CRM || 0,
+        row.CHENNAI_DIALER || 0,
+        row.CHENNAI_CRM || 0,
+        row.TOTAL_CALLS || 0,
+      ]);
+    });
+
+    // Summary rows
+    worksheetData.push([
+      "GRAND TOTAL",
+      "",
+      summary.grandTotal.noida_dialer,
+      summary.grandTotal.noida_crm,
+      summary.grandTotal.amd_dialer,
+      summary.grandTotal.amd_crm,
+      summary.grandTotal.chennai_dialer,
+      summary.grandTotal.chennai_crm,
+      summary.grandTotal.total,
+    ]);
+    worksheetData.push([
+      "ANS CALLS",
+      "",
+      summary.ansCalls.noida_dialer,
+      summary.ansCalls.noida_crm,
+      summary.ansCalls.amd_dialer,
+      summary.ansCalls.amd_crm,
+      summary.ansCalls.chennai_dialer,
+      summary.ansCalls.chennai_crm,
+      summary.ansCalls.total,
+    ]);
+    worksheetData.push([
+      "PROSPECT",
+      "",
+      summary.prospect.noida_dialer,
+      summary.prospect.noida_crm,
+      summary.prospect.amd_dialer,
+      summary.prospect.amd_crm,
+      summary.prospect.chennai_dialer,
+      summary.prospect.chennai_crm,
+      summary.prospect.total,
+    ]);
+    worksheetData.push([
+      "RATIO",
+      "",
+      summary.ratio.noida_dialer,
+      summary.ratio.noida_crm,
+      summary.ratio.amd_dialer,
+      summary.ratio.amd_crm,
+      summary.ratio.chennai_dialer,
+      summary.ratio.chennai_crm,
+      summary.ratio.total,
+    ]);
+    worksheetData.push([
+      "PICKUP RATIO",
+      "",
+      summary.pickupRatio.noida_dialer,
+      summary.pickupRatio.noida_crm,
+      summary.pickupRatio.amd_dialer,
+      summary.pickupRatio.amd_crm,
+      summary.pickupRatio.chennai_dialer,
+      summary.pickupRatio.chennai_crm,
+      summary.pickupRatio.total,
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+
+    worksheet["!cols"] = [
+      { wch: 8 },
+      { wch: 18 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 12 },
+    ];
+
+    worksheet["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }, // Title
+      { s: { r: 1, c: 2 }, e: { r: 1, c: 3 } }, // NOIDA
+      { s: { r: 1, c: 4 }, e: { r: 1, c: 5 } }, // AMD
+      { s: { r: 1, c: 6 }, e: { r: 1, c: 7 } }, // CHENNAI
+    ];
+
+    // Title style - deep blue
+    worksheet["A1"].s = {
+      font: { bold: true, sz: 14, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "002060" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
+
+    // Branch header style - deep blue
+    const branchHeaderStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "002060" } },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
+
+    // Sub header style - yellow for dialer, green for crm
+    const dialerHeaderStyle = {
+      font: { bold: true, color: { rgb: "000000" } },
+      fill: { fgColor: { rgb: "FFFF00" } },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
+
+    const crmHeaderStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "00B050" } },
+      alignment: { horizontal: "center" },
+      border: {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      },
+    };
+
+    // Apply branch header styles (row 2)
+    ["A2", "B2", "C2", "D2", "E2", "F2", "G2", "H2", "I2"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = branchHeaderStyle;
+    });
+
+    // Apply sub-header styles (row 3)
+    ["A3", "B3"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = branchHeaderStyle;
+    });
+    ["C3", "E3", "G3"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = dialerHeaderStyle;
+    });
+    ["D3", "F3", "H3"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = crmHeaderStyle;
+    });
+    if (worksheet["I3"]) {
+      worksheet["I3"].s = {
+        font: { bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "0070C0" } },
+        alignment: { horizontal: "center" },
+        border: {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        },
+      };
+    }
+
+    // Data rows styling
+    data.forEach((row, index) => {
+      const excelRow = index + 4;
+      const fillColor = getDispoFillColor(row.DISPO);
+      const fontColor = getDispoFontColor(row.DISPO);
+
+      const style = {
+        font: { color: { rgb: fontColor } },
+        fill: { fgColor: { rgb: fillColor } },
+        alignment: { horizontal: "center" },
+        border: {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        },
+      };
+      ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
+        const cell = worksheet[col + excelRow];
+        if (cell) cell.s = style;
+      });
+    });
+
+    // Summary row styles
+    const dataLength = data.length + 4;
+
+    // Grand Total - deep blue
+    const grandTotalRow = dataLength;
+    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
+      const cell = worksheet[col + grandTotalRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "FFFFFF" } },
+          fill: { fgColor: { rgb: "002060" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // ANS CALLS - orange
+    const ansRow = dataLength + 1;
+    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
+      const cell = worksheet[col + ansRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "FFFFFF" } },
+          fill: { fgColor: { rgb: "C65911" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // PROSPECT - green
+    const prospectRow = dataLength + 2;
+    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
+      const cell = worksheet[col + prospectRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "000000" } },
+          fill: { fgColor: { rgb: "92D050" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // RATIO - yellow
+    const ratioRow = dataLength + 3;
+    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
+      const cell = worksheet[col + ratioRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "000000" } },
+          fill: { fgColor: { rgb: "FFFF00" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // PICKUP RATIO - light blue
+    const pickupRow = dataLength + 4;
+    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
+      const cell = worksheet[col + pickupRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "FFFFFF" } },
+          fill: { fgColor: { rgb: "00B0F0" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Merged Dispo Report");
+
+    const buffer = XLSX.write(workbook, { type: "buffer" });
+
+    await supabase.from("download_logs").insert([
+      {
+        user_id,
+        branch: "MERGED",
+        report_type: "dispo",
+        downloaded_at: new Date().toISOString(),
+      },
+    ]);
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="Merged_Dispo_Report_${date}.xlsx"`
+    );
+
+    res.send(buffer);
+  } catch (error) {
+    console.error("Error in merged-dispo-excel:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/logs", async (req, res) => {
   try {
     const { data, error } = await supabase
