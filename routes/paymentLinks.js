@@ -686,10 +686,9 @@ router.post("/download", async (req, res) => {
 
     // Apply title style
     if (worksheet["A1"]) worksheet["A1"].s = titleStyle;
-    if (worksheet["A2"])
-      worksheet["A2"].s = dateRangeStyle;
+    if (worksheet["A2"]) worksheet["A2"].s = dateRangeStyle;
 
-      // Apply header styles
+    // Apply header styles
     ["A4", "B4", "C4", "D4", "E4"].forEach((cell) => {
       if (worksheet[cell]) worksheet[cell].s = headerStyle;
     });
@@ -1204,7 +1203,7 @@ router.post("/download-daily-status", async (req, res) => {
 
     // Header row
     worksheetData.push([
-      "SR NO",
+      "SR NO.",
       "BRANCH",
       "TOTAL LINK GENRATED",
       "REC AMOUNT",
