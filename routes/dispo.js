@@ -123,7 +123,7 @@ router.get("/report/:branch", async (req, res) => {
     if (upperBranch === "ALL") {
       // Fetch CRM dispositions from ALL branches (no branch filter)
       const { rows } = await pgConnection.query(
-        `SELECT 
+        `SELECT
           d.name AS disposition
         FROM public.lean_manual_lead AS l
         LEFT JOIN public.dispo_list_name AS d ON l.disposition_id = d.id
@@ -156,7 +156,7 @@ router.get("/report/:branch", async (req, res) => {
       }
 
       const { rows } = await pgConnection.query(
-        `SELECT 
+        `SELECT
           d.name AS disposition
         FROM public.lean_manual_lead AS l
         LEFT JOIN public.dispo_list_name AS d ON l.disposition_id = d.id
@@ -228,7 +228,7 @@ router.get("/report/:branch", async (req, res) => {
     }
 
     const [dialerUndisposedAns] = await mysqlConnection.execute(
-      `SELECT COUNT(*) AS undisposed_count FROM call_logs.DialerAns 
+      `SELECT COUNT(*) AS undisposed_count FROM call_logs.DialerAns
        WHERE DATE(createdAt) = ? AND (disposition_name IS NULL OR TRIM(disposition_name) = '')`,
       [reportDate]
     );
@@ -398,10 +398,9 @@ router.get("/merged-report", async (req, res) => {
     const { date } = req.query;
     const reportDate = date || new Date().toISOString().split("T")[0];
 
-    const branches = ["NOIDA", "AHMEDABAD", "CHENNAI"];
+    const branches = ["AHMEDABAD", "CHENNAI", "NOIDA"];
     const branchIds = { NOIDA: 2, AHMEDABAD: 1, CHENNAI: 3 };
 
-    // Initialize data structure
     const branchData = {};
     branches.forEach((branch) => {
       branchData[branch] = {
@@ -417,11 +416,64 @@ router.get("/merged-report", async (req, res) => {
     pgConnection = await pgPool.connect();
     mysqlConnection = await mysqlPool.getConnection();
 
-    // Fetch data for each branch
+    // Fetch ALL dialer data once
+    const [allDialerAns] = await mysqlConnection.execute(
+      `SELECT agent_name, disposition_name FROM call_logs.DialerAns WHERE DATE(createdAt) = ?`,
+      [reportDate]
+    );
+
+    // Fetch employees for ALL branches at once
+    const { rows: allEmployees } = await pgConnection.query(
+      `SELECT name, branch_id FROM public.hr_employee WHERE branch_id IN (1, 2, 3) AND name IS NOT NULL ORDER BY id ASC`
+    );
+
+    // Create a map of lowercase employee names to branch
+    const employeeToBranch = {};
+    allEmployees.forEach((emp) => {
+      if (emp.name) {
+        const cleanName = emp.name.toLowerCase().trim();
+        const branchName = Object.keys(branchIds).find(
+          (key) => branchIds[key] === emp.branch_id
+        );
+        employeeToBranch[cleanName] = branchName;
+      }
+    });
+
+    // Process dialer data once
+    allDialerAns.forEach((row) => {
+      if (!row.agent_name) return;
+
+      const agentLower = row.agent_name.toLowerCase().trim();
+
+      // Find which branch this agent belongs to
+      let matchedBranch = null;
+      for (const [empName, branch] of Object.entries(employeeToBranch)) {
+        // Check if agent name contains employee name OR employee name contains agent name
+        if (agentLower.includes(empName) || empName.includes(agentLower)) {
+          matchedBranch = branch;
+          break;
+        }
+      }
+
+      if (matchedBranch) {
+        if (row.disposition_name && row.disposition_name.trim() !== "") {
+          const mapped = mapDisposition(row.disposition_name, "DIALER");
+          if (
+            mapped !== "UNDISPOSED" &&
+            branchData[matchedBranch].dialerCounts[mapped] !== undefined
+          ) {
+            branchData[matchedBranch].dialerCounts[mapped]++;
+          }
+        } else {
+          branchData[matchedBranch].dialerCounts["UNDISPOSED"]++;
+        }
+      }
+    });
+
+    // Fetch CRM data for each branch
     for (const branch of branches) {
       const branchId = branchIds[branch];
 
-      // CRM Data
       const { rows: crmDispos } = await pgConnection.query(
         `SELECT d.name AS disposition
          FROM public.lean_manual_lead AS l
@@ -439,59 +491,16 @@ router.get("/merged-report", async (req, res) => {
         [branchId, reportDate]
       );
 
-      // Process CRM dispositions
       crmDispos.forEach((row) => {
         const mapped = mapDisposition(row.disposition, "CRM");
         if (branchData[branch].crmCounts[mapped] !== undefined) {
           branchData[branch].crmCounts[mapped]++;
         }
       });
+
       branchData[branch].crmCounts["UNDISPOSED"] = Number.parseInt(
         crmUndisposed[0]?.undisposed_count || 0
       );
-
-      // Dialer Data - Get employees for this branch
-      const { rows: employees } = await pgConnection.query(
-        "SELECT name FROM public.hr_employee WHERE branch_id = $1 ORDER BY id ASC",
-        [branchId]
-      );
-      const employeeNames = employees
-        .map((e) => e.name?.toLowerCase())
-        .filter(Boolean);
-
-      if (employeeNames.length > 0) {
-        const [allDialerAns] = await mysqlConnection.execute(
-          `SELECT agent_name, disposition_name FROM call_logs.DialerAns WHERE DATE(createdAt) = ?`,
-          [reportDate]
-        );
-
-        // Filter by employee names
-        const dialerDispos = allDialerAns.filter((row) => {
-          if (!row.agent_name) return false;
-          const agentLower = row.agent_name.toLowerCase();
-          return employeeNames.some((name) => agentLower.includes(name));
-        });
-
-        dialerDispos.forEach((row) => {
-          if (row.disposition_name && row.disposition_name.trim() !== "") {
-            const mapped = mapDisposition(row.disposition_name, "DIALER");
-            if (
-              mapped !== "UNDISPOSED" &&
-              branchData[branch].dialerCounts[mapped] !== undefined
-            ) {
-              branchData[branch].dialerCounts[mapped]++;
-            }
-          }
-        });
-      }
-
-      // Dialer undisposed count
-      const [dialerUndisposed] = await mysqlConnection.execute(
-        `SELECT COUNT(*) AS undisposed_count FROM call_logs.DialerAns 
-         WHERE DATE(createdAt) = ? AND (disposition_name IS NULL OR TRIM(disposition_name) = '')`,
-        [reportDate]
-      );
-      // Note: This is total undisposed, should be distributed or recalculated per branch
     }
 
     pgConnection.release();
@@ -502,61 +511,50 @@ router.get("/merged-report", async (req, res) => {
     // Build merged response data
     const data = DISPO_ORDER.map((dispo) => ({
       DISPO: dispo,
-      NOIDA_DIALER: branchData["NOIDA"].dialerCounts[dispo] || 0,
-      NOIDA_CRM: branchData["NOIDA"].crmCounts[dispo] || 0,
-      AMD_DIALER: branchData["AHMEDABAD"].dialerCounts[dispo] || 0,
-      AMD_CRM: branchData["AHMEDABAD"].crmCounts[dispo] || 0,
-      CHENNAI_DIALER: branchData["CHENNAI"].dialerCounts[dispo] || 0,
-      CHENNAI_CRM: branchData["CHENNAI"].crmCounts[dispo] || 0,
-      TOTAL_CALLS:
+      AHMEDABAD:
+        (branchData["AHMEDABAD"].dialerCounts[dispo] || 0) +
+        (branchData["AHMEDABAD"].crmCounts[dispo] || 0),
+      CHENNAI:
+        (branchData["CHENNAI"].dialerCounts[dispo] || 0) +
+        (branchData["CHENNAI"].crmCounts[dispo] || 0),
+      NOIDA:
         (branchData["NOIDA"].dialerCounts[dispo] || 0) +
-        (branchData["NOIDA"].crmCounts[dispo] || 0) +
+        (branchData["NOIDA"].crmCounts[dispo] || 0),
+      TOTAL_CALLS:
         (branchData["AHMEDABAD"].dialerCounts[dispo] || 0) +
         (branchData["AHMEDABAD"].crmCounts[dispo] || 0) +
         (branchData["CHENNAI"].dialerCounts[dispo] || 0) +
-        (branchData["CHENNAI"].crmCounts[dispo] || 0),
+        (branchData["CHENNAI"].crmCounts[dispo] || 0) +
+        (branchData["NOIDA"].dialerCounts[dispo] || 0) +
+        (branchData["NOIDA"].crmCounts[dispo] || 0),
     }));
 
-    // Calculate summary for each branch
     const calcBranchSummary = (branch) => {
-      let grandDialer = 0,
-        grandCRM = 0;
-      let ansDialer = 0,
-        ansCRM = 0;
-      let prospectDialer = 0,
-        prospectCRM = 0;
+      let grand = 0;
+      let ans = 0;
+      let prospect = 0;
 
       DISPO_ORDER.forEach((dispo) => {
-        const dialerCount = branchData[branch].dialerCounts[dispo] || 0;
-        const crmCount = branchData[branch].crmCounts[dispo] || 0;
-
-        grandDialer += dialerCount;
-        grandCRM += crmCount;
+        const total =
+          (branchData[branch].dialerCounts[dispo] || 0) +
+          (branchData[branch].crmCounts[dispo] || 0);
+        grand += total;
 
         if (ANSWERED_CALL_DISPOS.includes(dispo)) {
-          ansDialer += dialerCount;
-          ansCRM += crmCount;
+          ans += total;
         }
 
         if (PROSPECT_DISPOS.includes(dispo)) {
-          prospectDialer += dialerCount;
-          prospectCRM += crmCount;
+          prospect += total;
         }
       });
 
       return {
-        grandDialer,
-        grandCRM,
-        ansDialer,
-        ansCRM,
-        prospectDialer,
-        prospectCRM,
-        ratioDialer:
-          ansDialer > 0 ? Math.round((prospectDialer / ansDialer) * 100) : 0,
-        ratioCRM: ansCRM > 0 ? Math.round((prospectCRM / ansCRM) * 100) : 0,
-        pickupDialer:
-          grandDialer > 0 ? Math.round((ansDialer / grandDialer) * 100) : 0,
-        pickupCRM: grandCRM > 0 ? Math.round((ansCRM / grandCRM) * 100) : 0,
+        grand,
+        ans,
+        prospect,
+        ratio: ans > 0 ? Math.round((prospect / ans) * 100) : 0,
+        pickupRatio: grand > 0 ? Math.round((ans / grand) * 100) : 0,
       };
     };
 
@@ -565,77 +563,46 @@ router.get("/merged-report", async (req, res) => {
     const chennaiSummary = calcBranchSummary("CHENNAI");
 
     const totalGrand =
-      noidaSummary.grandDialer +
-      noidaSummary.grandCRM +
-      amdSummary.grandDialer +
-      amdSummary.grandCRM +
-      chennaiSummary.grandDialer +
-      chennaiSummary.grandCRM;
-    const totalAns =
-      noidaSummary.ansDialer +
-      noidaSummary.ansCRM +
-      amdSummary.ansDialer +
-      amdSummary.ansCRM +
-      chennaiSummary.ansDialer +
-      chennaiSummary.ansCRM;
+      noidaSummary.grand + amdSummary.grand + chennaiSummary.grand;
+    const totalAns = noidaSummary.ans + amdSummary.ans + chennaiSummary.ans;
     const totalProspect =
-      noidaSummary.prospectDialer +
-      noidaSummary.prospectCRM +
-      amdSummary.prospectDialer +
-      amdSummary.prospectCRM +
-      chennaiSummary.prospectDialer +
-      chennaiSummary.prospectCRM;
+      noidaSummary.prospect + amdSummary.prospect + chennaiSummary.prospect;
 
     res.json({
       date: reportDate,
       data,
       summary: {
         grandTotal: {
-          noida_dialer: noidaSummary.grandDialer,
-          noida_crm: noidaSummary.grandCRM,
-          amd_dialer: amdSummary.grandDialer,
-          amd_crm: amdSummary.grandCRM,
-          chennai_dialer: chennaiSummary.grandDialer,
-          chennai_crm: chennaiSummary.grandCRM,
+          ahmedabad: amdSummary.grand,
+          chennai: chennaiSummary.grand,
+          noida: noidaSummary.grand,
           total: totalGrand,
         },
         ansCalls: {
-          noida_dialer: noidaSummary.ansDialer,
-          noida_crm: noidaSummary.ansCRM,
-          amd_dialer: amdSummary.ansDialer,
-          amd_crm: amdSummary.ansCRM,
-          chennai_dialer: chennaiSummary.ansDialer,
-          chennai_crm: chennaiSummary.ansCRM,
+          ahmedabad: amdSummary.ans,
+          chennai: chennaiSummary.ans,
+          noida: noidaSummary.ans,
           total: totalAns,
         },
         prospect: {
-          noida_dialer: noidaSummary.prospectDialer,
-          noida_crm: noidaSummary.prospectCRM,
-          amd_dialer: amdSummary.prospectDialer,
-          amd_crm: amdSummary.prospectCRM,
-          chennai_dialer: chennaiSummary.prospectDialer,
-          chennai_crm: chennaiSummary.prospectCRM,
+          ahmedabad: amdSummary.prospect,
+          chennai: chennaiSummary.prospect,
+          noida: noidaSummary.prospect,
           total: totalProspect,
         },
         ratio: {
-          noida_dialer: `${noidaSummary.ratioDialer}%`,
-          noida_crm: `${noidaSummary.ratioCRM}%`,
-          amd_dialer: `${amdSummary.ratioDialer}%`,
-          amd_crm: `${amdSummary.ratioCRM}%`,
-          chennai_dialer: `${chennaiSummary.ratioDialer}%`,
-          chennai_crm: `${chennaiSummary.ratioCRM}%`,
+          ahmedabad: `${amdSummary.ratio}%`,
+          chennai: `${chennaiSummary.ratio}%`,
+          noida: `${noidaSummary.ratio}%`,
           total:
             totalAns > 0
               ? `${Math.round((totalProspect / totalAns) * 100)}%`
               : "0%",
         },
         pickupRatio: {
-          noida_dialer: `${noidaSummary.pickupDialer}%`,
-          noida_crm: `${noidaSummary.pickupCRM}%`,
-          amd_dialer: `${amdSummary.pickupDialer}%`,
-          amd_crm: `${amdSummary.pickupCRM}%`,
-          chennai_dialer: `${chennaiSummary.pickupDialer}%`,
-          chennai_crm: `${chennaiSummary.pickupCRM}%`,
+          ahmedabad: `${amdSummary.pickupRatio}%`,
+          chennai: `${chennaiSummary.pickupRatio}%`,
+          noida: `${noidaSummary.pickupRatio}%`,
           total:
             totalGrand > 0
               ? `${Math.round((totalAns / totalGrand) * 100)}%`

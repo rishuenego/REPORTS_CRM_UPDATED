@@ -145,6 +145,51 @@ router.get("/birthdays", async (req, res) => {
   }
 });
 
+router.put("/birthdays/update", async (req, res) => {
+  let pgConnection = null;
+
+  try {
+    const { name, birthday } = req.body;
+
+    if (!name || !birthday) {
+      return res.status(400).json({ error: "Name and birthday are required" });
+    }
+
+    pgConnection = await pgPool.connect();
+
+    // Update the birthday for the employee
+    const result = await pgConnection.query(
+      `UPDATE hr_employee 
+       SET birthday = $1 
+       WHERE LOWER(name) = LOWER($2)`,
+      [birthday, name]
+    );
+
+    pgConnection.release();
+    pgConnection = null;
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Employee not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Birthday updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating birthday:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (pgConnection) {
+      try {
+        pgConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+});
+
 router.get("/users", async (req, res) => {
   let mysqlConnection = null;
 

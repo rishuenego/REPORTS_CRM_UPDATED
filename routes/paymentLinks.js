@@ -333,6 +333,261 @@ router.get("/status-report", async (req, res) => {
   }
 });
 
+router.get("/monthly-status", async (req, res) => {
+  let mysqlConnection = null;
+  let pgConnection = null;
+
+  try {
+    const { month, year } = req.query;
+    const monthNum = Number.parseInt(month) || new Date().getMonth() + 1;
+    const yearNum = Number.parseInt(year) || new Date().getFullYear();
+
+    // Calculate start and end dates for the month
+    const startDate = `${yearNum}-${String(monthNum).padStart(2, "0")}-01`;
+    const lastDay = new Date(yearNum, monthNum, 0).getDate();
+    const endDate = `${yearNum}-${String(monthNum).padStart(
+      2,
+      "0"
+    )}-${lastDay}`;
+
+    // Get employee branch mapping from PostgreSQL
+    pgConnection = await pgPool.connect();
+    const { rows: employees } = await pgConnection.query(
+      `SELECT id, name, branch_id FROM public.hr_employee ORDER BY id ASC`
+    );
+    pgConnection.release();
+    pgConnection = null;
+
+    // Create employee name to branch mapping
+    const employeeBranchMap = new Map();
+    employees.forEach((emp) => {
+      if (emp.name) {
+        employeeBranchMap.set(emp.name.toLowerCase().trim(), emp.branch_id);
+      }
+    });
+
+    // Fetch payment data from MySQL
+    mysqlConnection = await mysqlPool.getConnection();
+    const [paymentRows] = await mysqlConnection.execute(
+      `SELECT 
+        e.name AS employee_name,
+        r.amount,
+        r.status
+      FROM razorpay.payment_requests AS r
+      LEFT JOIN razorpay.employees AS e ON e.id = r.employee_id
+      WHERE DATE(r.created_at) BETWEEN ? AND ?`,
+      [startDate, endDate]
+    );
+    mysqlConnection.release();
+    mysqlConnection = null;
+
+    // Initialize branch totals
+    const branchData = {
+      NOIDA: { total_link_generated: 0, rec_amount: 0, pending: 0 },
+      AHMEDABAD: { total_link_generated: 0, rec_amount: 0, pending: 0 },
+      CHENNAI: { total_link_generated: 0, rec_amount: 0, pending: 0 },
+    };
+
+    // Process payments
+    paymentRows.forEach((row) => {
+      const amount = Number(row.amount) || 0;
+      const empName = row.employee_name?.toLowerCase().trim() || "";
+      const isReceived =
+        row.status === null || row.status === "" || row.status === "received";
+
+      // Find branch
+      let branchId = null;
+      if (employeeBranchMap.has(empName)) {
+        branchId = employeeBranchMap.get(empName);
+      } else {
+        for (const [name, bId] of employeeBranchMap.entries()) {
+          if (empName.includes(name) || name.includes(empName)) {
+            branchId = bId;
+            break;
+          }
+        }
+      }
+
+      let branchName = null;
+      if (branchId === 1) branchName = "AHMEDABAD";
+      else if (branchId === 2) branchName = "NOIDA";
+      else if (branchId === 3) branchName = "CHENNAI";
+
+      if (branchName) {
+        branchData[branchName].total_link_generated += amount;
+        if (isReceived) {
+          branchData[branchName].rec_amount += amount;
+        }
+      }
+    });
+
+    // Calculate pending for each branch
+    Object.keys(branchData).forEach((branch) => {
+      branchData[branch].pending =
+        branchData[branch].total_link_generated - branchData[branch].rec_amount;
+    });
+
+    // Format response data (NOIDA first, then AHMEDABAD, then CHENNAI)
+    const data = [
+      { branch: "NOIDA", ...branchData.NOIDA },
+      { branch: "AHMEDABAD", ...branchData.AHMEDABAD },
+      { branch: "CHENNAI", ...branchData.CHENNAI },
+    ];
+
+    const totals = {
+      total_link_generated: data.reduce(
+        (sum, d) => sum + d.total_link_generated,
+        0
+      ),
+      rec_amount: data.reduce((sum, d) => sum + d.rec_amount, 0),
+      pending: data.reduce((sum, d) => sum + d.pending, 0),
+    };
+
+    res.json({ data, totals, month: monthNum, year: yearNum });
+  } catch (error) {
+    console.error("Monthly Payment Status Error:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (mysqlConnection) {
+      try {
+        mysqlConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    if (pgConnection) {
+      try {
+        pgConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+});
+
+router.get("/daily-status", async (req, res) => {
+  let mysqlConnection = null;
+  let pgConnection = null;
+
+  try {
+    const { date } = req.query;
+    const reportDate = date || new Date().toISOString().split("T")[0];
+
+    // Get employee branch mapping from PostgreSQL
+    pgConnection = await pgPool.connect();
+    const { rows: employees } = await pgConnection.query(
+      `SELECT id, name, branch_id FROM public.hr_employee ORDER BY id ASC`
+    );
+    pgConnection.release();
+    pgConnection = null;
+
+    // Create employee name to branch mapping
+    const employeeBranchMap = new Map();
+    employees.forEach((emp) => {
+      if (emp.name) {
+        employeeBranchMap.set(emp.name.toLowerCase().trim(), emp.branch_id);
+      }
+    });
+
+    // Fetch payment data from MySQL for the specific date
+    mysqlConnection = await mysqlPool.getConnection();
+    const [paymentRows] = await mysqlConnection.execute(
+      `SELECT 
+        e.name AS employee_name,
+        r.amount,
+        r.status
+      FROM razorpay.payment_requests AS r
+      LEFT JOIN razorpay.employees AS e ON e.id = r.employee_id
+      WHERE DATE(r.created_at) = ?`,
+      [reportDate]
+    );
+    mysqlConnection.release();
+    mysqlConnection = null;
+
+    // Initialize branch totals
+    const branchData = {
+      NOIDA: { total_link_generated: 0, rec_amount: 0, pending: 0 },
+      AHMEDABAD: { total_link_generated: 0, rec_amount: 0, pending: 0 },
+      CHENNAI: { total_link_generated: 0, rec_amount: 0, pending: 0 },
+    };
+
+    // Process payments
+    paymentRows.forEach((row) => {
+      const amount = Number(row.amount) || 0;
+      const empName = row.employee_name?.toLowerCase().trim() || "";
+      const isReceived =
+        row.status === null || row.status === "" || row.status === "received";
+
+      // Find branch
+      let branchId = null;
+      if (employeeBranchMap.has(empName)) {
+        branchId = employeeBranchMap.get(empName);
+      } else {
+        for (const [name, bId] of employeeBranchMap.entries()) {
+          if (empName.includes(name) || name.includes(empName)) {
+            branchId = bId;
+            break;
+          }
+        }
+      }
+
+      let branchName = null;
+      if (branchId === 1) branchName = "AHMEDABAD";
+      else if (branchId === 2) branchName = "NOIDA";
+      else if (branchId === 3) branchName = "CHENNAI";
+
+      if (branchName) {
+        branchData[branchName].total_link_generated += amount;
+        if (isReceived) {
+          branchData[branchName].rec_amount += amount;
+        }
+      }
+    });
+
+    // Calculate pending for each branch
+    Object.keys(branchData).forEach((branch) => {
+      branchData[branch].pending =
+        branchData[branch].total_link_generated - branchData[branch].rec_amount;
+    });
+
+    // Format response data
+    const data = [
+      { branch: "NOIDA", ...branchData.NOIDA },
+      { branch: "AHMEDABAD", ...branchData.AHMEDABAD },
+      { branch: "CHENNAI", ...branchData.CHENNAI },
+    ];
+
+    const totals = {
+      total_link_generated: data.reduce(
+        (sum, d) => sum + d.total_link_generated,
+        0
+      ),
+      rec_amount: data.reduce((sum, d) => sum + d.rec_amount, 0),
+      pending: data.reduce((sum, d) => sum + d.pending, 0),
+    };
+
+    res.json({ data, totals, date: reportDate });
+  } catch (error) {
+    console.error("Daily Payment Status Error:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (mysqlConnection) {
+      try {
+        mysqlConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    if (pgConnection) {
+      try {
+        pgConnection.release();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+});
+
 router.post("/download", async (req, res) => {
   try {
     const { data, summary, branches, startDate, endDate, user_id } = req.body;
@@ -740,7 +995,6 @@ router.post("/download-status", async (req, res) => {
 
     const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
 
-    // Log download
     if (user_id) {
       try {
         await supabase.from("download_logs").insert([
@@ -767,6 +1021,305 @@ router.post("/download-status", async (req, res) => {
     res.send(Buffer.from(buffer));
   } catch (error) {
     console.error("Download Status Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/download-monthly-status", async (req, res) => {
+  try {
+    const { data, totals, month, year, user_id } = req.body;
+
+    if (!data || data.length === 0) {
+      return res.status(400).json({ error: "No data to download" });
+    }
+
+    const monthNames = [
+      "JAN",
+      "FEB",
+      "MAR",
+      "APR",
+      "MAY",
+      "JUN",
+      "JUL",
+      "AUG",
+      "SEP",
+      "OCT",
+      "NOV",
+      "DEC",
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    const worksheetData = [];
+
+    // Title row
+    worksheetData.push([
+      `PAYMENT LINK GENERATE REPORT ${monthNames[month - 1]}-${year}`,
+    ]);
+
+    // Header row
+    worksheetData.push([
+      "SR NO",
+      "BRANCH",
+      "TOTAL LINK GENRATED",
+      "REC AMOUNT",
+      "PENDING",
+    ]);
+
+    // Data rows
+    data.forEach((row, index) => {
+      worksheetData.push([
+        index + 1,
+        row.branch,
+        row.total_link_generated,
+        row.rec_amount,
+        row.pending,
+      ]);
+    });
+
+    // Total row
+    worksheetData.push([
+      "",
+      "TOTAL",
+      totals.total_link_generated,
+      totals.rec_amount,
+      totals.pending,
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+
+    // Column widths
+    worksheet["!cols"] = [
+      { wch: 8 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 15 },
+    ];
+
+    // Merges
+    worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+
+    // Styles
+    const greenStyle = {
+      font: { bold: true, color: { rgb: "000000" } },
+      fill: { fgColor: { rgb: "92D050" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    const dataStyle = {
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    // Apply styles
+    if (worksheet["A1"]) worksheet["A1"].s = greenStyle;
+    ["A2", "B2", "C2", "D2", "E2"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = greenStyle;
+    });
+
+    // Data rows
+    for (let i = 0; i < data.length; i++) {
+      const row = i + 3;
+      ["A", "B", "C", "D", "E"].forEach((col) => {
+        const cell = worksheet[col + row];
+        if (cell) cell.s = dataStyle;
+      });
+    }
+
+    // Total row
+    const totalRow = data.length + 3;
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + totalRow];
+      if (cell) cell.s = greenStyle;
+    });
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Monthly Report");
+
+    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+    if (user_id) {
+      try {
+        await supabase.from("download_logs").insert([
+          {
+            user_id,
+            branch: "ALL",
+            report_type: "monthly_payment_status",
+            downloaded_at: new Date().toISOString(),
+          },
+        ]);
+      } catch (logError) {
+        console.error("Failed to log download:", logError);
+      }
+    }
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Payment_Link_Report_${
+        monthNames[month - 1]
+      }_${year}.xlsx`
+    );
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    console.error("Download Monthly Status Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/download-daily-status", async (req, res) => {
+  try {
+    const { data, totals, date, user_id } = req.body;
+
+    if (!data || data.length === 0) {
+      return res.status(400).json({ error: "No data to download" });
+    }
+
+    const reportDate = new Date(date);
+    const dateStr = `${reportDate
+      .getDate()
+      .toString()
+      .padStart(2, "0")}-${reportDate
+      .toLocaleString("en-US", { month: "short" })
+      .toUpperCase()}`;
+
+    const workbook = XLSX.utils.book_new();
+    const worksheetData = [];
+
+    // Title row
+    worksheetData.push([`PAYMENT LINK GENERATE REPORT ${dateStr}`]);
+
+    // Header row
+    worksheetData.push([
+      "SR NO",
+      "BRANCH",
+      "TOTAL LINK GENRATED",
+      "REC AMOUNT",
+      "PENDING",
+    ]);
+
+    // Data rows
+    data.forEach((row, index) => {
+      worksheetData.push([
+        index + 1,
+        row.branch,
+        row.total_link_generated,
+        row.rec_amount,
+        row.pending,
+      ]);
+    });
+
+    // Total row
+    worksheetData.push([
+      "",
+      "TOTAL",
+      totals.total_link_generated,
+      totals.rec_amount,
+      totals.pending,
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+
+    // Column widths
+    worksheet["!cols"] = [
+      { wch: 8 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 15 },
+    ];
+
+    // Merges
+    worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+
+    // Styles
+    const greenStyle = {
+      font: { bold: true, color: { rgb: "000000" } },
+      fill: { fgColor: { rgb: "92D050" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    const dataStyle = {
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    // Apply styles
+    if (worksheet["A1"]) worksheet["A1"].s = greenStyle;
+    ["A2", "B2", "C2", "D2", "E2"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = greenStyle;
+    });
+
+    // Data rows
+    for (let i = 0; i < data.length; i++) {
+      const row = i + 3;
+      ["A", "B", "C", "D", "E"].forEach((col) => {
+        const cell = worksheet[col + row];
+        if (cell) cell.s = dataStyle;
+      });
+    }
+
+    // Total row
+    const totalRow = data.length + 3;
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + totalRow];
+      if (cell) cell.s = greenStyle;
+    });
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Daily Report");
+
+    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+    if (user_id) {
+      try {
+        await supabase.from("download_logs").insert([
+          {
+            user_id,
+            branch: "ALL",
+            report_type: "daily_payment_status",
+            downloaded_at: new Date().toISOString(),
+          },
+        ]);
+      } catch (logError) {
+        console.error("Failed to log download:", logError);
+      }
+    }
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Payment_Link_Report_${dateStr}.xlsx`
+    );
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    console.error("Download Daily Status Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
