@@ -19,6 +19,8 @@ const DISPO_MAPPING = {
     "VOICE MAIL": "NOT PICKUP",
     DND: "OTHER",
     "ALREADY PAID": "ALREADY PAID",
+    "VOICE ISSUE": "VOICE ISSUE",
+    VIS: "VOICE ISSUE",
   },
   DIALER: {
     SCRAP: "SCRAP",
@@ -61,6 +63,8 @@ const DISPO_MAPPING = {
     BUS: "BUSY",
     OTHER: "OTHER",
     UNDISPOSED: "UNDISPOSED",
+    "VOICE ISSUE": "VOICE ISSUE",
+    VIS: "VOICE ISSUE",
   },
 };
 
@@ -72,6 +76,7 @@ const ANSWERED_CALL_DISPOS = [
   "LANGUAGE ISSUE",
   "NEED UPDATE",
   "NOT INTERESTED",
+  "VOICE ISSUE",
 ];
 
 const PROSPECT_DISPOS = ["INTERESTED", "INTRODUCTION"];
@@ -89,6 +94,7 @@ const DISPO_ORDER = [
   "OTHER",
   "SCRAP",
   "UNDISPOSED",
+  "VOICE ISSUE",
 ];
 
 const mapDisposition = (dispo, source) => {

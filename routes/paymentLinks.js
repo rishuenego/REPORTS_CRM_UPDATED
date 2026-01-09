@@ -9,6 +9,12 @@ const getBranchId = (branch) => {
   return branchMap[branch.toUpperCase()];
 };
 
+const formatRupee = (amount) => {
+  if (amount === 0 || amount === null || amount === undefined) return "";
+  const rounded = Math.round(amount);
+  return `₹ ${rounded.toLocaleString("en-IN")}`;
+};
+
 // Get payment links report
 router.get("/report", async (req, res) => {
   let mysqlConnection = null;
@@ -611,22 +617,22 @@ router.post("/download", async (req, res) => {
     // Header row
     worksheetData.push(["SR NO.", "EMPLOYEE NAME", "AMOUNT", "DATE", "STATUS"]);
 
-    // Data rows
+    // Data rows - Added rupee sign and rounded amount
     data.forEach((row, index) => {
       worksheetData.push([
         index + 1,
         row.employee_name || "Unknown",
-        row.amount,
+        formatRupee(row.amount),
         row.date,
         row.status === "received" ? "Received" : "Pending",
       ]);
     });
 
-    // Summary row
+    // Summary row - Added rupee sign and rounded amount
     worksheetData.push([
       "GRAND TOTAL",
       "",
-      summary.totalAmount,
+      formatRupee(summary.totalAmount),
       "",
       `${data.length} Records`,
     ]);
@@ -637,7 +643,7 @@ router.post("/download", async (req, res) => {
     worksheet["!cols"] = [
       { wch: 10 },
       { wch: 30 },
-      { wch: 15 },
+      { wch: 18 },
       { wch: 15 },
       { wch: 12 },
     ];
@@ -686,9 +692,10 @@ router.post("/download", async (req, res) => {
 
     // Apply title style
     if (worksheet["A1"]) worksheet["A1"].s = titleStyle;
-    if (worksheet["A2"]) worksheet["A2"].s = dateRangeStyle;
+    if (worksheet["A2"])
+      worksheet["A2"].s = dateRangeStyle;
 
-    // Apply header styles
+      // Apply header styles
     ["A4", "B4", "C4", "D4", "E4"].forEach((cell) => {
       if (worksheet[cell]) worksheet[cell].s = headerStyle;
     });
@@ -843,7 +850,7 @@ router.post("/download-status", async (req, res) => {
       "PENDIG",
     ]);
 
-    // Data rows
+    // Data rows - Added rupee sign and rounded amounts
     data.forEach((row, index) => {
       const date = new Date(row.date);
       const dateStr = `${date.getDate()}-${date.toLocaleString("en-US", {
@@ -852,31 +859,31 @@ router.post("/download-status", async (req, res) => {
       worksheetData.push([
         index + 1,
         dateStr,
-        row.ahm_link_generated || 0,
-        row.ahm_rec_amount || "",
-        row.chennai_link_generated || 0,
-        row.chennai_rec_amount || "",
-        row.noida_link_generated || 0,
-        row.noida_rec_amount || "",
-        row.total_link_generated || 0,
-        row.total_rec_amount || 0,
-        row.pending || 0,
+        formatRupee(row.ahm_link_generated) || "",
+        formatRupee(row.ahm_rec_amount) || "",
+        formatRupee(row.chennai_link_generated) || "",
+        formatRupee(row.chennai_rec_amount) || "",
+        formatRupee(row.noida_link_generated) || "",
+        formatRupee(row.noida_rec_amount) || "",
+        formatRupee(row.total_link_generated) || "",
+        formatRupee(row.total_rec_amount) || "",
+        formatRupee(row.pending) || "",
       ]);
     });
 
-    // Grand total row
+    // Grand total row - Added rupee sign and rounded amounts
     worksheetData.push([
       "GRAND TOTAL",
       "",
-      grandTotals.ahm_link_generated || 0,
-      grandTotals.ahm_rec_amount || 0,
-      grandTotals.chennai_link_generated || 0,
-      grandTotals.chennai_rec_amount || 0,
-      grandTotals.noida_link_generated || 0,
-      grandTotals.noida_rec_amount || 0,
-      grandTotals.total_link_generated || 0,
-      grandTotals.total_rec_amount || 0,
-      grandTotals.pending || 0,
+      formatRupee(grandTotals.ahm_link_generated),
+      formatRupee(grandTotals.ahm_rec_amount),
+      formatRupee(grandTotals.chennai_link_generated),
+      formatRupee(grandTotals.chennai_rec_amount),
+      formatRupee(grandTotals.noida_link_generated),
+      formatRupee(grandTotals.noida_rec_amount),
+      formatRupee(grandTotals.total_link_generated),
+      formatRupee(grandTotals.total_rec_amount),
+      formatRupee(grandTotals.pending),
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
@@ -1064,24 +1071,24 @@ router.post("/download-monthly-status", async (req, res) => {
       "PENDING",
     ]);
 
-    // Data rows
+    // Data rows - Added rupee sign and rounded amounts
     data.forEach((row, index) => {
       worksheetData.push([
         index + 1,
         row.branch,
-        row.total_link_generated,
-        row.rec_amount,
-        row.pending,
+        formatRupee(row.total_link_generated),
+        formatRupee(row.rec_amount),
+        formatRupee(row.pending),
       ]);
     });
 
-    // Total row
+    // Total row - Added rupee sign and rounded amounts
     worksheetData.push([
       "",
       "TOTAL",
-      totals.total_link_generated,
-      totals.rec_amount,
-      totals.pending,
+      formatRupee(totals.total_link_generated),
+      formatRupee(totals.rec_amount),
+      formatRupee(totals.pending),
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
@@ -1210,24 +1217,24 @@ router.post("/download-daily-status", async (req, res) => {
       "PENDING",
     ]);
 
-    // Data rows
+    // Data rows - Added rupee sign and rounded amounts
     data.forEach((row, index) => {
       worksheetData.push([
         index + 1,
         row.branch,
-        row.total_link_generated,
-        row.rec_amount,
-        row.pending,
+        formatRupee(row.total_link_generated),
+        formatRupee(row.rec_amount),
+        formatRupee(row.pending),
       ]);
     });
 
-    // Total row
+    // Total row - Added rupee sign and rounded amounts
     worksheetData.push([
       "",
       "TOTAL",
-      totals.total_link_generated,
-      totals.rec_amount,
-      totals.pending,
+      formatRupee(totals.total_link_generated),
+      formatRupee(totals.rec_amount),
+      formatRupee(totals.pending),
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);

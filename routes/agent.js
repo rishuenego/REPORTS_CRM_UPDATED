@@ -1,12 +1,12 @@
-import express from "express"
-import { mysqlPool, pgPool } from "../index.js"
+import express from "express";
+import { mysqlPool, pgPool } from "../index.js";
 
-const router = express.Router()
+const router = express.Router();
 
 const getBranchId = (branch) => {
-  const branchMap = { AHM: 1, NOIDA: 2, CHENNAI: 3 }
-  return branchMap[branch]
-}
+  const branchMap = { AHM: 1, NOIDA: 2, CHENNAI: 3 };
+  return branchMap[branch];
+};
 
 // Disposition mapping
 const DISPO_MAPPING_DIALER = {
@@ -50,7 +50,7 @@ const DISPO_MAPPING_DIALER = {
   BUS: "BUSY",
   OTHER: "OTHER",
   UNDISPOSED: "UNDISPOSED",
-}
+};
 
 const DISPO_MAPPING_CRM = {
   INTERESTED: "INTERESTED",
@@ -66,7 +66,7 @@ const DISPO_MAPPING_CRM = {
   "VOICE MAIL": "NOT PICKUP",
   DND: "OTHER",
   "ALREADY PAID": "ALREADY PAID",
-}
+};
 
 const ANSWERED_CALL_DISPOS = [
   "CALL BACK",
@@ -76,8 +76,8 @@ const ANSWERED_CALL_DISPOS = [
   "LANGUAGE ISSUE",
   "NEED UPDATE",
   "NOT INTERESTED",
-]
-const PROSPECT_DISPOS = ["INTERESTED", "INTRODUCTION"]
+];
+const PROSPECT_DISPOS = ["INTERESTED", "INTRODUCTION"];
 const DISPO_ORDER = [
   "ALREADY PAID",
   "BUSY",
@@ -91,63 +91,64 @@ const DISPO_ORDER = [
   "OTHER",
   "SCRAP",
   "UNDISPOSED",
-]
+];
 
 const mapDisposition = (dispo, source) => {
-  if (!dispo) return "UNDISPOSED"
-  const upperDispo = dispo.toUpperCase().trim()
-  const mapping = source === "DIALER" ? DISPO_MAPPING_DIALER : DISPO_MAPPING_CRM
-  return mapping[upperDispo] || "OTHER"
-}
+  if (!dispo) return "UNDISPOSED";
+  const upperDispo = dispo.toUpperCase().trim();
+  const mapping =
+    source === "DIALER" ? DISPO_MAPPING_DIALER : DISPO_MAPPING_CRM;
+  return mapping[upperDispo] || "OTHER";
+};
 
 router.get("/list/:branch", async (req, res) => {
-  let pgConnection = null
+  let pgConnection = null;
 
   try {
-    const { branch } = req.params
-    const branchId = getBranchId(branch.toUpperCase())
+    const { branch } = req.params;
+    const branchId = getBranchId(branch.toUpperCase());
 
     if (!branchId) {
-      return res.status(400).json({ error: "Invalid branch" })
+      return res.status(400).json({ error: "Invalid branch" });
     }
 
-    pgConnection = await pgPool.connect()
+    pgConnection = await pgPool.connect();
     const { rows: employees } = await pgConnection.query(
       "SELECT name FROM public.hr_employee WHERE branch_id = $1 ORDER BY name ASC",
-      [branchId],
-    )
-    pgConnection.release()
-    pgConnection = null
+      [branchId]
+    );
+    pgConnection.release();
+    pgConnection = null;
 
-    const agents = employees.map((e) => e.name).filter(Boolean)
+    const agents = employees.map((e) => e.name).filter(Boolean);
 
-    res.json({ agents })
+    res.json({ agents });
   } catch (error) {
-    console.error("Agent List Error:", error.message)
-    res.status(500).json({ error: error.message })
+    console.error("Agent List Error:", error.message);
+    res.status(500).json({ error: error.message });
   } finally {
     if (pgConnection) {
       try {
-        pgConnection.release()
+        pgConnection.release();
       } catch (e) {
         /* ignore */
       }
     }
   }
-})
+});
 
 // Original report endpoint (kept for backward compatibility)
 router.get("/report", async (req, res) => {
-  let mysqlConnection = null
+  let mysqlConnection = null;
 
   try {
-    const { agentName, branch, startDate, endDate } = req.query
+    const { agentName, branch, startDate, endDate } = req.query;
 
     if (!agentName || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing required parameters" })
+      return res.status(400).json({ error: "Missing required parameters" });
     }
 
-    mysqlConnection = await mysqlPool.getConnection()
+    mysqlConnection = await mysqlPool.getConnection();
 
     const [rows] = await mysqlConnection.execute(
       `
@@ -188,29 +189,38 @@ router.get("/report", async (req, res) => {
       GROUP BY DATE(combined.date)
       ORDER BY DATE(combined.date) DESC
     `,
-      [`%${agentName}%`, startDate, endDate, `%${agentName}%`, startDate, endDate],
-    )
+      [
+        `%${agentName}%`,
+        startDate,
+        endDate,
+        `%${agentName}%`,
+        startDate,
+        endDate,
+      ]
+    );
 
-    mysqlConnection.release()
-    mysqlConnection = null
+    mysqlConnection.release();
+    mysqlConnection = null;
 
-    let grandTotalCalls = 0
-    let grandMissedCalls = 0
-    let grandTotalCallsCount = 0
-    let grandTotalDuration = 0
-    let grandProspect = 0
+    let grandTotalCalls = 0;
+    let grandMissedCalls = 0;
+    let grandTotalCallsCount = 0;
+    let grandTotalDuration = 0;
+    let grandProspect = 0;
 
     const formattedData = rows.map((row) => {
-      grandTotalCalls += Number(row.ANS_CALLS) || 0
-      grandMissedCalls += Number(row.MISSED_CALLS) || 0
-      grandTotalCallsCount += Number(row.TOTAL_CALLS) || 0
-      grandProspect += Number(row.PROSPECT) || 0
+      grandTotalCalls += Number(row.ANS_CALLS) || 0;
+      grandMissedCalls += Number(row.MISSED_CALLS) || 0;
+      grandTotalCallsCount += Number(row.TOTAL_CALLS) || 0;
+      grandProspect += Number(row.PROSPECT) || 0;
 
       if (row.TALK_TIME && typeof row.TALK_TIME === "string") {
-        const timeParts = row.TALK_TIME.split(":")
+        const timeParts = row.TALK_TIME.split(":");
         if (timeParts.length === 3) {
           grandTotalDuration +=
-            Number.parseInt(timeParts[0]) * 3600 + Number.parseInt(timeParts[1]) * 60 + Number.parseInt(timeParts[2])
+            Number.parseInt(timeParts[0]) * 3600 +
+            Number.parseInt(timeParts[1]) * 60 +
+            Number.parseInt(timeParts[2]);
         }
       }
 
@@ -222,13 +232,16 @@ router.get("/report", async (req, res) => {
         TOTAL_CALLS: row.TOTAL_CALLS,
         TALK_TIME: row.TALK_TIME,
         PROSPECT: row.PROSPECT,
-      }
-    })
+      };
+    });
 
-    const hours = Math.floor(grandTotalDuration / 3600)
-    const minutes = Math.floor((grandTotalDuration % 3600) / 60)
-    const seconds = grandTotalDuration % 60
-    const grandTotalTalkTime = `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    const hours = Math.floor(grandTotalDuration / 3600);
+    const minutes = Math.floor((grandTotalDuration % 3600) / 60);
+    const seconds = grandTotalDuration % 60;
+    const grandTotalTalkTime = `${hours}:${String(minutes).padStart(
+      2,
+      "0"
+    )}:${String(seconds).padStart(2, "0")}`;
 
     res.json({
       agentName,
@@ -240,77 +253,77 @@ router.get("/report", async (req, res) => {
         talkTime: grandTotalTalkTime,
         prospect: grandProspect,
       },
-    })
+    });
   } catch (error) {
-    console.error("Agent Report Error:", error.message, error.stack)
-    res.status(500).json({ error: error.message })
+    console.error("Agent Report Error:", error.message, error.stack);
+    res.status(500).json({ error: error.message });
   } finally {
     if (mysqlConnection) {
       try {
-        mysqlConnection.release()
+        mysqlConnection.release();
       } catch (e) {
         /* ignore */
       }
     }
   }
-})
+});
 
 // New disposition report endpoint for agent
 router.get("/dispo-report", async (req, res) => {
-  let pgConnection = null
-  let mysqlConnection = null
+  let pgConnection = null;
+  let mysqlConnection = null;
 
   try {
-    const { agentName, startDate, endDate } = req.query
+    const { agentName, startDate, endDate } = req.query;
 
     if (!agentName || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing required parameters" })
+      return res.status(400).json({ error: "Missing required parameters" });
     }
 
     // Initialize disposition counts
-    const dispoCountsDialer = {}
-    const dispoCountsCRM = {}
+    const dispoCountsDialer = {};
+    const dispoCountsCRM = {};
 
     DISPO_ORDER.forEach((d) => {
-      dispoCountsDialer[d] = 0
-      dispoCountsCRM[d] = 0
-    })
+      dispoCountsDialer[d] = 0;
+      dispoCountsCRM[d] = 0;
+    });
 
     // Get Dialer dispositions from MySQL
-    mysqlConnection = await mysqlPool.getConnection()
+    mysqlConnection = await mysqlPool.getConnection();
 
     const [dialerAnsDispos] = await mysqlConnection.execute(
       `SELECT disposition_name FROM call_logs.DialerAns 
        WHERE agent_name LIKE ? AND DATE(createdAt) BETWEEN ? AND ?`,
-      [`%${agentName}%`, startDate, endDate],
-    )
+      [`%${agentName}%`, startDate, endDate]
+    );
 
     const [dialerMissedDispos] = await mysqlConnection.execute(
       `SELECT disposition_name FROM call_logs.DialerMissed 
        WHERE agent_name LIKE ? AND DATE(createdAt) BETWEEN ? AND ?`,
-      [`%${agentName}%`, startDate, endDate],
-    )
+      [`%${agentName}%`, startDate, endDate]
+    );
 
-    mysqlConnection.release()
-    mysqlConnection = null
+    mysqlConnection.release();
+    mysqlConnection = null;
 
     // Count Dialer dispositions
     dialerAnsDispos.forEach((row) => {
-      const mapped = mapDisposition(row.disposition_name, "DIALER")
+      const mapped = mapDisposition(row.disposition_name, "DIALER");
       if (dispoCountsDialer[mapped] !== undefined) {
-        dispoCountsDialer[mapped]++
+        dispoCountsDialer[mapped]++;
       }
-    })
+    });
 
     dialerMissedDispos.forEach((row) => {
-      const mapped = mapDisposition(row.disposition_name, "DIALER")
+      const mapped = mapDisposition(row.disposition_name, "DIALER");
       if (dispoCountsDialer[mapped] !== undefined) {
-        dispoCountsDialer[mapped]++
+        dispoCountsDialer[mapped]++;
       }
-    })
+    });
 
     // Get CRM dispositions from PostgreSQL
-    pgConnection = await pgPool.connect()
+    pgConnection = await pgPool.connect();
     const { rows: crmDispos } = await pgConnection.query(
       `SELECT d.name AS disposition
        FROM public.lean_manual_lead AS l
@@ -319,57 +332,65 @@ router.get("/dispo-report", async (req, res) => {
        WHERE d.name IS NOT NULL
          AND h.name ILIKE $1
          AND DATE(l.write_date) BETWEEN $2 AND $3`,
-      [`%${agentName}%`, startDate, endDate],
-    )
-    pgConnection.release()
-    pgConnection = null
+      [`%${agentName}%`, startDate, endDate]
+    );
+    pgConnection.release();
+    pgConnection = null;
 
     // Count CRM dispositions
     crmDispos.forEach((row) => {
-      const mapped = mapDisposition(row.disposition, "CRM")
+      const mapped = mapDisposition(row.disposition, "CRM");
       if (dispoCountsCRM[mapped] !== undefined) {
-        dispoCountsCRM[mapped]++
+        dispoCountsCRM[mapped]++;
       }
-    })
+    });
 
     // Build response data
     const data = DISPO_ORDER.map((dispo) => ({
       DISPO: dispo,
       DIALER_CALLS: dispoCountsDialer[dispo] || 0,
       CRM_CALLS: dispoCountsCRM[dispo] || 0,
-      TOTAL_CALLS: (dispoCountsDialer[dispo] || 0) + (dispoCountsCRM[dispo] || 0),
-    }))
+      TOTAL_CALLS:
+        (dispoCountsDialer[dispo] || 0) + (dispoCountsCRM[dispo] || 0),
+    }));
 
     // Calculate summary
-    let grandTotalDialer = 0
-    let grandTotalCRM = 0
-    let ansCallsDialer = 0
-    let ansCallsCRM = 0
-    let prospectDialer = 0
-    let prospectCRM = 0
+    let grandTotalDialer = 0;
+    let grandTotalCRM = 0;
+    let ansCallsDialer = 0;
+    let ansCallsCRM = 0;
+    let prospectDialer = 0;
+    let prospectCRM = 0;
 
     data.forEach((row) => {
-      grandTotalDialer += row.DIALER_CALLS
-      grandTotalCRM += row.CRM_CALLS
+      grandTotalDialer += row.DIALER_CALLS;
+      grandTotalCRM += row.CRM_CALLS;
 
       if (ANSWERED_CALL_DISPOS.includes(row.DISPO)) {
-        ansCallsDialer += row.DIALER_CALLS
-        ansCallsCRM += row.CRM_CALLS
+        ansCallsDialer += row.DIALER_CALLS;
+        ansCallsCRM += row.CRM_CALLS;
       }
 
       if (PROSPECT_DISPOS.includes(row.DISPO)) {
-        prospectDialer += row.DIALER_CALLS
-        prospectCRM += row.CRM_CALLS
+        prospectDialer += row.DIALER_CALLS;
+        prospectCRM += row.CRM_CALLS;
       }
-    })
+    });
 
     // Calculate ratios
-    const ratioDialer = ansCallsDialer > 0 ? Math.round((prospectDialer / ansCallsDialer) * 100) : 0
-    const ratioCRM = ansCallsCRM > 0 ? Math.round((prospectCRM / ansCallsCRM) * 100) : 0
+    const ratioDialer =
+      ansCallsDialer > 0
+        ? Math.round((prospectDialer / ansCallsDialer) * 100)
+        : 0;
+    const ratioCRM =
+      ansCallsCRM > 0 ? Math.round((prospectCRM / ansCallsCRM) * 100) : 0;
     const ratioTotal =
       ansCallsDialer + ansCallsCRM > 0
-        ? Math.round(((prospectDialer + prospectCRM) / (ansCallsDialer + ansCallsCRM)) * 100)
-        : 0
+        ? Math.round(
+            ((prospectDialer + prospectCRM) / (ansCallsDialer + ansCallsCRM)) *
+              100
+          )
+        : 0;
 
     res.json({
       agentName,
@@ -396,26 +417,26 @@ router.get("/dispo-report", async (req, res) => {
           total: `${ratioTotal}%`,
         },
       },
-    })
+    });
   } catch (error) {
-    console.error("Agent Dispo Report Error:", error.message, error.stack)
-    res.status(500).json({ error: error.message })
+    console.error("Agent Dispo Report Error:", error.message, error.stack);
+    res.status(500).json({ error: error.message });
   } finally {
     if (pgConnection) {
       try {
-        pgConnection.release()
+        pgConnection.release();
       } catch (e) {
         /* ignore */
       }
     }
     if (mysqlConnection) {
       try {
-        mysqlConnection.release()
+        mysqlConnection.release();
       } catch (e) {
         /* ignore */
       }
     }
   }
-})
+});
 
-export default router
+export default router;

@@ -13,7 +13,6 @@ const convertTimeToMinutes = (timeStr) => {
   return hours * 60 + minutes + seconds / 60;
 };
 
-// Dispo order for reports
 const DISPO_ORDER = [
   "ALREADY PAID",
   "BUSY",
@@ -27,6 +26,7 @@ const DISPO_ORDER = [
   "OTHER",
   "SCRAP",
   "UNDISPOSED",
+  "VOICE ISSUE",
 ];
 
 // Get row style based on disposition
@@ -1390,125 +1390,84 @@ router.post("/merged-dispo-excel", async (req, res) => {
     const dateTitle = `${day}${suffix} ${month} ${year}`;
 
     // Title row
-    worksheetData.push([`DISPO REPORT OF ${dateTitle} TILL TIME`]);
+    worksheetData.push([`BRANCH WISE DISPO REPORT OF ${dateTitle} (TODAY)`]);
 
-    // Header row 1 - Branch names
-    worksheetData.push([
-      "",
-      "",
-      "NOIDA",
-      "",
-      "AMD",
-      "",
-      "CHENNAI",
-      "",
-      "TOTAL CALLS",
-    ]);
-
-    // Header row 2 - Sub headers
     worksheetData.push([
       "SR NO",
       "DISPO",
-      "DIALER CALLS",
-      "CRM CALLS",
-      "DIALER CALLS",
-      "CRM CALLS",
-      "DIALER CALLS",
-      "CRM CALLS",
-      "",
+      "AHMEDABAD",
+      "CHENNAI",
+      "NOIDA",
+      "GRAND TOTAL",
     ]);
 
-    // Data rows
+    // Data rows - using simpler format matching the UI
     data.forEach((row, i) => {
       worksheetData.push([
         i + 1,
         row.DISPO,
-        row.NOIDA_DIALER || 0,
-        row.NOIDA_CRM || 0,
-        row.AMD_DIALER || 0,
-        row.AMD_CRM || 0,
-        row.CHENNAI_DIALER || 0,
-        row.CHENNAI_CRM || 0,
+        row.AHMEDABAD || 0,
+        row.CHENNAI || 0,
+        row.NOIDA || 0,
         row.TOTAL_CALLS || 0,
       ]);
     });
 
-    // Summary rows
+    // Summary rows matching UI
     worksheetData.push([
       "GRAND TOTAL",
       "",
-      summary.grandTotal.noida_dialer,
-      summary.grandTotal.noida_crm,
-      summary.grandTotal.amd_dialer,
-      summary.grandTotal.amd_crm,
-      summary.grandTotal.chennai_dialer,
-      summary.grandTotal.chennai_crm,
+      summary.grandTotal.ahmedabad,
+      summary.grandTotal.chennai,
+      summary.grandTotal.noida,
       summary.grandTotal.total,
     ]);
     worksheetData.push([
       "ANS CALLS",
       "",
-      summary.ansCalls.noida_dialer,
-      summary.ansCalls.noida_crm,
-      summary.ansCalls.amd_dialer,
-      summary.ansCalls.amd_crm,
-      summary.ansCalls.chennai_dialer,
-      summary.ansCalls.chennai_crm,
+      summary.ansCalls.ahmedabad,
+      summary.ansCalls.chennai,
+      summary.ansCalls.noida,
       summary.ansCalls.total,
     ]);
     worksheetData.push([
       "PROSPECT",
       "",
-      summary.prospect.noida_dialer,
-      summary.prospect.noida_crm,
-      summary.prospect.amd_dialer,
-      summary.prospect.amd_crm,
-      summary.prospect.chennai_dialer,
-      summary.prospect.chennai_crm,
+      summary.prospect.ahmedabad,
+      summary.prospect.chennai,
+      summary.prospect.noida,
       summary.prospect.total,
     ]);
     worksheetData.push([
       "RATIO",
       "",
-      summary.ratio.noida_dialer,
-      summary.ratio.noida_crm,
-      summary.ratio.amd_dialer,
-      summary.ratio.amd_crm,
-      summary.ratio.chennai_dialer,
-      summary.ratio.chennai_crm,
+      summary.ratio.ahmedabad,
+      summary.ratio.chennai,
+      summary.ratio.noida,
       summary.ratio.total,
     ]);
     worksheetData.push([
       "PICKUP RATIO",
       "",
-      summary.pickupRatio.noida_dialer,
-      summary.pickupRatio.noida_crm,
-      summary.pickupRatio.amd_dialer,
-      summary.pickupRatio.amd_crm,
-      summary.pickupRatio.chennai_dialer,
-      summary.pickupRatio.chennai_crm,
+      summary.pickupRatio.ahmedabad,
+      summary.pickupRatio.chennai,
+      summary.pickupRatio.noida,
       summary.pickupRatio.total,
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
 
     worksheet["!cols"] = [
-      { wch: 8 },
-      { wch: 18 },
-      { wch: 14 },
-      { wch: 12 },
-      { wch: 14 },
-      { wch: 12 },
-      { wch: 14 },
-      { wch: 12 },
-      { wch: 12 },
+      { wch: 6 }, // SR NO
+      { wch: 16 }, // DISPO
+      { wch: 12 }, // AHMEDABAD
+      { wch: 10 }, // CHENNAI
+      { wch: 10 }, // NOIDA
+      { wch: 12 }, // GRAND TOTAL
     ];
 
     worksheet["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }, // Title
-      { s: { r: 1, c: 2 }, e: { r: 1, c: 3 } }, // NOIDA
-      { s: { r: 1, c: 4 }, e: { r: 1, c: 5 } }, // AMD
-      { s: { r: 1, c: 6 }, e: { r: 1, c: 7 } }, // CHENNAI
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }, // Title
     ];
 
     // Title style - deep blue
@@ -1524,8 +1483,8 @@ router.post("/merged-dispo-excel", async (req, res) => {
       },
     };
 
-    // Branch header style - deep blue
-    const branchHeaderStyle = {
+    // Header style - deep blue
+    const headerStyle = {
       font: { bold: true, color: { rgb: "FFFFFF" } },
       fill: { fgColor: { rgb: "002060" } },
       alignment: { horizontal: "center" },
@@ -1537,63 +1496,14 @@ router.post("/merged-dispo-excel", async (req, res) => {
       },
     };
 
-    // Sub header style - yellow for dialer, green for crm
-    const dialerHeaderStyle = {
-      font: { bold: true, color: { rgb: "000000" } },
-      fill: { fgColor: { rgb: "FFFF00" } },
-      alignment: { horizontal: "center" },
-      border: {
-        top: { style: "thin" },
-        left: { style: "thin" },
-        bottom: { style: "thin" },
-        right: { style: "thin" },
-      },
-    };
-
-    const crmHeaderStyle = {
-      font: { bold: true, color: { rgb: "FFFFFF" } },
-      fill: { fgColor: { rgb: "00B050" } },
-      alignment: { horizontal: "center" },
-      border: {
-        top: { style: "thin" },
-        left: { style: "thin" },
-        bottom: { style: "thin" },
-        right: { style: "thin" },
-      },
-    };
-
-    // Apply branch header styles (row 2)
-    ["A2", "B2", "C2", "D2", "E2", "F2", "G2", "H2", "I2"].forEach((cell) => {
-      if (worksheet[cell]) worksheet[cell].s = branchHeaderStyle;
+    // Apply header styles (row 2)
+    ["A2", "B2", "C2", "D2", "E2", "F2"].forEach((cell) => {
+      if (worksheet[cell]) worksheet[cell].s = headerStyle;
     });
-
-    // Apply sub-header styles (row 3)
-    ["A3", "B3"].forEach((cell) => {
-      if (worksheet[cell]) worksheet[cell].s = branchHeaderStyle;
-    });
-    ["C3", "E3", "G3"].forEach((cell) => {
-      if (worksheet[cell]) worksheet[cell].s = dialerHeaderStyle;
-    });
-    ["D3", "F3", "H3"].forEach((cell) => {
-      if (worksheet[cell]) worksheet[cell].s = crmHeaderStyle;
-    });
-    if (worksheet["I3"]) {
-      worksheet["I3"].s = {
-        font: { bold: true, color: { rgb: "FFFFFF" } },
-        fill: { fgColor: { rgb: "0070C0" } },
-        alignment: { horizontal: "center" },
-        border: {
-          top: { style: "thin" },
-          left: { style: "thin" },
-          bottom: { style: "thin" },
-          right: { style: "thin" },
-        },
-      };
-    }
 
     // Data rows styling
     data.forEach((row, index) => {
-      const excelRow = index + 4;
+      const excelRow = index + 3;
       const fillColor = getDispoFillColor(row.DISPO);
       const fontColor = getDispoFontColor(row.DISPO);
 
@@ -1608,59 +1518,23 @@ router.post("/merged-dispo-excel", async (req, res) => {
           right: { style: "thin" },
         },
       };
-      ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
+      ["A", "B", "C", "D", "E", "F"].forEach((col) => {
         const cell = worksheet[col + excelRow];
         if (cell) cell.s = style;
       });
     });
 
     // Summary row styles
-    const dataLength = data.length + 4;
+    const dataLength = data.length + 3;
 
-    // Grand Total - deep blue
+    // Grand Total - orange
     const grandTotalRow = dataLength;
-    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
+    ["A", "B", "C", "D", "E", "F"].forEach((col) => {
       const cell = worksheet[col + grandTotalRow];
       if (cell)
         cell.s = {
-          font: { bold: true, color: { rgb: "FFFFFF" } },
-          fill: { fgColor: { rgb: "002060" } },
-          alignment: { horizontal: "center" },
-          border: {
-            top: { style: "thin" },
-            left: { style: "thin" },
-            bottom: { style: "thin" },
-            right: { style: "thin" },
-          },
-        };
-    });
-
-    // ANS CALLS - orange
-    const ansRow = dataLength + 1;
-    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
-      const cell = worksheet[col + ansRow];
-      if (cell)
-        cell.s = {
-          font: { bold: true, color: { rgb: "FFFFFF" } },
-          fill: { fgColor: { rgb: "C65911" } },
-          alignment: { horizontal: "center" },
-          border: {
-            top: { style: "thin" },
-            left: { style: "thin" },
-            bottom: { style: "thin" },
-            right: { style: "thin" },
-          },
-        };
-    });
-
-    // PROSPECT - green
-    const prospectRow = dataLength + 2;
-    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
-      const cell = worksheet[col + prospectRow];
-      if (cell)
-        cell.s = {
           font: { bold: true, color: { rgb: "000000" } },
-          fill: { fgColor: { rgb: "92D050" } },
+          fill: { fgColor: { rgb: "F79646" } },
           alignment: { horizontal: "center" },
           border: {
             top: { style: "thin" },
@@ -1671,10 +1545,10 @@ router.post("/merged-dispo-excel", async (req, res) => {
         };
     });
 
-    // RATIO - yellow
-    const ratioRow = dataLength + 3;
-    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
-      const cell = worksheet[col + ratioRow];
+    // ANS CALLS - yellow
+    const ansRow = dataLength + 1;
+    ["A", "B", "C", "D", "E", "F"].forEach((col) => {
+      const cell = worksheet[col + ansRow];
       if (cell)
         cell.s = {
           font: { bold: true, color: { rgb: "000000" } },
@@ -1689,13 +1563,13 @@ router.post("/merged-dispo-excel", async (req, res) => {
         };
     });
 
-    // PICKUP RATIO - light blue
-    const pickupRow = dataLength + 4;
-    ["A", "B", "C", "D", "E", "F", "G", "H", "I"].forEach((col) => {
-      const cell = worksheet[col + pickupRow];
+    // PROSPECT - light blue
+    const prospectRow = dataLength + 2;
+    ["A", "B", "C", "D", "E", "F"].forEach((col) => {
+      const cell = worksheet[col + prospectRow];
       if (cell)
         cell.s = {
-          font: { bold: true, color: { rgb: "FFFFFF" } },
+          font: { bold: true, color: { rgb: "000000" } },
           fill: { fgColor: { rgb: "00B0F0" } },
           alignment: { horizontal: "center" },
           border: {
@@ -1706,6 +1580,51 @@ router.post("/merged-dispo-excel", async (req, res) => {
           },
         };
     });
+
+    // RATIO - orange
+    const ratioRow = dataLength + 3;
+    ["A", "B", "C", "D", "E", "F"].forEach((col) => {
+      const cell = worksheet[col + ratioRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "000000" } },
+          fill: { fgColor: { rgb: "F79646" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // PICKUP RATIO - green
+    const pickupRow = dataLength + 4;
+    ["A", "B", "C", "D", "E", "F"].forEach((col) => {
+      const cell = worksheet[col + pickupRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "000000" } },
+          fill: { fgColor: { rgb: "92D050" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    // Merge cells for summary labels
+    worksheet["!merges"].push(
+      { s: { r: grandTotalRow - 1, c: 0 }, e: { r: grandTotalRow - 1, c: 1 } },
+      { s: { r: ansRow - 1, c: 0 }, e: { r: ansRow - 1, c: 1 } },
+      { s: { r: prospectRow - 1, c: 0 }, e: { r: prospectRow - 1, c: 1 } },
+      { s: { r: ratioRow - 1, c: 0 }, e: { r: ratioRow - 1, c: 1 } },
+      { s: { r: pickupRow - 1, c: 0 }, e: { r: pickupRow - 1, c: 1 } }
+    );
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "Merged Dispo Report");
 
