@@ -123,6 +123,7 @@ router.get("/report/:branch", async (req, res) => {
 
     let crmDispos;
     let crmUndisposedCount = 0;
+    const crmAgentNames = new Set();
 
     const upperBranch = branch.toUpperCase();
 
@@ -130,7 +131,8 @@ router.get("/report/:branch", async (req, res) => {
       // Fetch CRM dispositions from ALL branches (no branch filter)
       const { rows } = await pgConnection.query(
         `SELECT
-          d.name AS disposition
+          d.name AS disposition,
+          h.name AS agent_name
         FROM public.lean_manual_lead AS l
         LEFT JOIN public.dispo_list_name AS d ON l.disposition_id = d.id
         LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
@@ -140,19 +142,23 @@ router.get("/report/:branch", async (req, res) => {
         [reportDate]
       );
       crmDispos = rows;
+      rows.forEach((row) => {
+        if (row.agent_name)
+          crmAgentNames.add(row.agent_name.toLowerCase().trim());
+      });
 
-      const { rows: undisposedRows } = await pgConnection.query(
-        `SELECT COUNT(*) AS undisposed_count
-        FROM public.lean_manual_lead AS l
-        LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
-        WHERE h.name IS NOT NULL
-          AND DATE(l.write_date) = $1
-          AND l.disposition_id IS NULL`,
-        [reportDate]
-      );
-      crmUndisposedCount = Number.parseInt(
-        undisposedRows[0]?.undisposed_count || 0
-      );
+      // const { rows: undisposedRows } = await pgConnection.query(
+      //   `SELECT COUNT(*) AS undisposed_count
+      //   FROM public.lean_manual_lead AS l
+      //   LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
+      //   WHERE h.name IS NOT NULL
+      //     AND DATE(l.write_date) = $1
+      //     AND l.disposition_id IS NULL`,
+      //   [reportDate]
+      // );
+      // crmUndisposedCount = Number.parseInt(
+      //   undisposedRows[0]?.undisposed_count || 0
+      // );
     } else {
       const branchId = getBranchId(upperBranch);
 
@@ -163,7 +169,8 @@ router.get("/report/:branch", async (req, res) => {
 
       const { rows } = await pgConnection.query(
         `SELECT
-          d.name AS disposition
+          d.name AS disposition,
+          h.name AS agent_name
         FROM public.lean_manual_lead AS l
         LEFT JOIN public.dispo_list_name AS d ON l.disposition_id = d.id
         LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
@@ -174,20 +181,24 @@ router.get("/report/:branch", async (req, res) => {
         [branchId, reportDate]
       );
       crmDispos = rows;
+      rows.forEach((row) => {
+        if (row.agent_name)
+          crmAgentNames.add(row.agent_name.toLowerCase().trim());
+      });
 
-      const { rows: undisposedRows } = await pgConnection.query(
-        `SELECT COUNT(*) AS undisposed_count
-        FROM public.lean_manual_lead AS l
-        LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
-        WHERE h.name IS NOT NULL
-          AND h.branch_id = $1
-          AND DATE(l.write_date) = $2
-          AND l.disposition_id IS NULL`,
-        [branchId, reportDate]
-      );
-      crmUndisposedCount = Number.parseInt(
-        undisposedRows[0]?.undisposed_count || 0
-      );
+      // const { rows: undisposedRows } = await pgConnection.query(
+      //   `SELECT COUNT(*) AS undisposed_count
+      //   FROM public.lean_manual_lead AS l
+      //   LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
+      //   WHERE h.name IS NOT NULL
+      //     AND h.branch_id = $1
+      //     AND DATE(l.write_date) = $2
+      //     AND l.disposition_id IS NULL`,
+      //   [branchId, reportDate]
+      // );
+      // crmUndisposedCount = Number.parseInt(
+      //   undisposedRows[0]?.undisposed_count || 0
+      // );
     }
 
     pgConnection.release();
@@ -197,6 +208,7 @@ router.get("/report/:branch", async (req, res) => {
     mysqlConnection = await mysqlPool.getConnection();
 
     let dialerAnsDispos = [];
+    const dialerAgentNames = new Set();
 
     if (upperBranch !== "ALL") {
       // Get employee names for the specific branch from PostgreSQL
@@ -222,15 +234,25 @@ router.get("/report/:branch", async (req, res) => {
         dialerAnsDispos = allDialerAns.filter((row) => {
           if (!row.agent_name) return false;
           const agentLower = row.agent_name.toLowerCase();
-          return employeeNames.some((name) => agentLower.includes(name));
+          const matched = employeeNames.some((name) =>
+            agentLower.includes(name)
+          );
+          if (matched) {
+            dialerAgentNames.add(agentLower.trim());
+          }
+          return matched;
         });
       }
     } else {
       const [rows] = await mysqlConnection.execute(
-        `SELECT disposition_name FROM call_logs.DialerAns WHERE DATE(createdAt) = ?`,
+        `SELECT agent_name, disposition_name FROM call_logs.DialerAns WHERE DATE(createdAt) = ?`,
         [reportDate]
       );
       dialerAnsDispos = rows;
+      rows.forEach((row) => {
+        if (row.agent_name)
+          dialerAgentNames.add(row.agent_name.toLowerCase().trim());
+      });
     }
 
     const [dialerUndisposedAns] = await mysqlConnection.execute(
@@ -278,7 +300,7 @@ router.get("/report/:branch", async (req, res) => {
       }
     });
 
-    dispoCountsCRM["UNDISPOSED"] = crmUndisposedCount;
+    // dispoCountsCRM["UNDISPOSED"] = crmUndisposedCount;
 
     // Build response data
     const data = DISPO_ORDER.map((dispo) => ({
@@ -343,6 +365,9 @@ router.get("/report/:branch", async (req, res) => {
           )
         : 0;
 
+    const allUniqueAgents = new Set([...crmAgentNames, ...dialerAgentNames]);
+    const uniqueAgentsCount = allUniqueAgents.size;
+
     res.json({
       branch: upperBranch,
       date: reportDate,
@@ -373,6 +398,7 @@ router.get("/report/:branch", async (req, res) => {
           crm: `${pickupRatioCRM}%`,
           total: `${pickupRatioTotal}%`,
         },
+        uniqueAgents: uniqueAgentsCount,
       },
     });
   } catch (error) {
@@ -412,6 +438,7 @@ router.get("/merged-report", async (req, res) => {
       branchData[branch] = {
         dialerCounts: {},
         crmCounts: {},
+        uniqueAgents: new Set(),
       };
       DISPO_ORDER.forEach((d) => {
         branchData[branch].dialerCounts[d] = 0;
@@ -453,15 +480,19 @@ router.get("/merged-report", async (req, res) => {
 
       // Find which branch this agent belongs to
       let matchedBranch = null;
+      let matchedEmpName = null;
       for (const [empName, branch] of Object.entries(employeeToBranch)) {
         // Check if agent name contains employee name OR employee name contains agent name
         if (agentLower.includes(empName) || empName.includes(agentLower)) {
           matchedBranch = branch;
+          matchedEmpName = empName;
           break;
         }
       }
 
       if (matchedBranch) {
+        branchData[matchedBranch].uniqueAgents.add(matchedEmpName);
+
         if (row.disposition_name && row.disposition_name.trim() !== "") {
           const mapped = mapDisposition(row.disposition_name, "DIALER");
           if (
@@ -481,7 +512,7 @@ router.get("/merged-report", async (req, res) => {
       const branchId = branchIds[branch];
 
       const { rows: crmDispos } = await pgConnection.query(
-        `SELECT d.name AS disposition
+        `SELECT d.name AS disposition, h.name AS agent_name
          FROM public.lean_manual_lead AS l
          LEFT JOIN public.dispo_list_name AS d ON l.disposition_id = d.id
          LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
@@ -489,24 +520,29 @@ router.get("/merged-report", async (req, res) => {
         [branchId, reportDate]
       );
 
-      const { rows: crmUndisposed } = await pgConnection.query(
-        `SELECT COUNT(*) AS undisposed_count
-         FROM public.lean_manual_lead AS l
-         LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
-         WHERE h.name IS NOT NULL AND h.branch_id = $1 AND DATE(l.write_date) = $2 AND l.disposition_id IS NULL`,
-        [branchId, reportDate]
-      );
+      // const { rows: crmUndisposed } = await pgConnection.query(
+      //   `SELECT COUNT(*) AS undisposed_count
+      //    FROM public.lean_manual_lead AS l
+      //    LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
+      //    WHERE h.name IS NOT NULL AND h.branch_id = $1 AND DATE(l.write_date) = $2 AND l.disposition_id IS NULL`,
+      //   [branchId, reportDate]
+      // );
 
       crmDispos.forEach((row) => {
         const mapped = mapDisposition(row.disposition, "CRM");
         if (branchData[branch].crmCounts[mapped] !== undefined) {
           branchData[branch].crmCounts[mapped]++;
         }
+        if (row.agent_name) {
+          branchData[branch].uniqueAgents.add(
+            row.agent_name.toLowerCase().trim()
+          );
+        }
       });
 
-      branchData[branch].crmCounts["UNDISPOSED"] = Number.parseInt(
-        crmUndisposed[0]?.undisposed_count || 0
-      );
+      // branchData[branch].crmCounts["UNDISPOSED"] = Number.parseInt(
+      //   crmUndisposed[0]?.undisposed_count || 0
+      // );
     }
 
     pgConnection.release();
@@ -561,6 +597,7 @@ router.get("/merged-report", async (req, res) => {
         prospect,
         ratio: ans > 0 ? Math.round((prospect / ans) * 100) : 0,
         pickupRatio: grand > 0 ? Math.round((ans / grand) * 100) : 0,
+        uniqueAgents: branchData[branch].uniqueAgents.size,
       };
     };
 
@@ -573,6 +610,12 @@ router.get("/merged-report", async (req, res) => {
     const totalAns = noidaSummary.ans + amdSummary.ans + chennaiSummary.ans;
     const totalProspect =
       noidaSummary.prospect + amdSummary.prospect + chennaiSummary.prospect;
+    const allUniqueAgents = new Set([
+      ...branchData["AHMEDABAD"].uniqueAgents,
+      ...branchData["CHENNAI"].uniqueAgents,
+      ...branchData["NOIDA"].uniqueAgents,
+    ]);
+    const totalUniqueAgents = allUniqueAgents.size;
 
     res.json({
       date: reportDate,
@@ -613,6 +656,12 @@ router.get("/merged-report", async (req, res) => {
             totalGrand > 0
               ? `${Math.round((totalAns / totalGrand) * 100)}%`
               : "0%",
+        },
+        uniqueAgents: {
+          ahmedabad: amdSummary.uniqueAgents,
+          chennai: chennaiSummary.uniqueAgents,
+          noida: noidaSummary.uniqueAgents,
+          total: totalUniqueAgents,
         },
       },
     });

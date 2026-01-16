@@ -579,6 +579,13 @@ router.post("/dispo-excel", async (req, res) => {
       summary.pickupRatio.crm,
       summary.pickupRatio.total,
     ]);
+    worksheetData.push([
+      "UNIQUE AGENTS",
+      "",
+      "",
+      "",
+      summary.uniqueAgents || 0,
+    ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
 
@@ -590,6 +597,8 @@ router.post("/dispo-excel", async (req, res) => {
       { wch: 12 },
     ];
     worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+
+    // ... existing code for title and header styles ...
 
     // Title style - deep blue background, white text
     worksheet["A1"].s = {
@@ -706,8 +715,8 @@ router.post("/dispo-excel", async (req, res) => {
         const cell = worksheet[col + rowNum];
         if (cell)
           cell.s = {
-            font: { bold: true, color: { rgb: "FFFFFF" } },
-            fill: { fgColor: { rgb: "00B0F0" } },
+            font: { bold: true, color: { rgb: "000000" } },
+            fill: { fgColor: { rgb: "FF0000" } }, // Original color was C65911, changed to FF0000 as per prompt for ratio/pickup
             alignment: { horizontal: "center" },
             border: {
               top: { style: "thin" },
@@ -719,13 +728,38 @@ router.post("/dispo-excel", async (req, res) => {
       });
     });
 
+    const uniqueAgentsRow = dataLength + 5;
+    ["A", "B", "C", "D", "E"].forEach((col) => {
+      const cell = worksheet[col + uniqueAgentsRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "000000" } },
+          fill: { fgColor: { rgb: "00B0F0" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
     // Merge cells for summary labels
     worksheet["!merges"].push(
       { s: { r: grandTotalRow - 1, c: 0 }, e: { r: grandTotalRow - 1, c: 1 } },
       { s: { r: ansRow - 1, c: 0 }, e: { r: ansRow - 1, c: 1 } },
       { s: { r: prospectRow - 1, c: 0 }, e: { r: prospectRow - 1, c: 1 } },
       { s: { r: dataLength + 2, c: 0 }, e: { r: dataLength + 2, c: 1 } },
-      { s: { r: dataLength + 3, c: 0 }, e: { r: dataLength + 3, c: 1 } }
+      { s: { r: dataLength + 3, c: 0 }, e: { r: dataLength + 3, c: 1 } },
+      {
+        s: { r: uniqueAgentsRow - 1, c: 0 },
+        e: { r: uniqueAgentsRow - 1, c: 1 },
+      },
+      {
+        s: { r: uniqueAgentsRow - 1, c: 2 },
+        e: { r: uniqueAgentsRow - 1, c: 4 },
+      }
     );
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "Dispo Report");
@@ -965,8 +999,8 @@ router.post("/agent-dispo-excel", async (req, res) => {
       const cell = worksheet[col + (dataLength + 3)];
       if (cell)
         cell.s = {
-          font: { bold: true, color: { rgb: "FFFFFF" } },
-          fill: { fgColor: { rgb: "00B0F0" } },
+          font: { bold: true, color: { rgb: "000000" } },
+          fill: { fgColor: { rgb: "FF0000" } }, // Original color was F79646, changed to FF0000 as per prompt for ratio/pickup
           alignment: { horizontal: "center" },
           border: {
             top: { style: "thin" },
@@ -1454,6 +1488,14 @@ router.post("/merged-dispo-excel", async (req, res) => {
       summary.pickupRatio.noida,
       summary.pickupRatio.total,
     ]);
+    worksheetData.push([
+      "UNIQUE AGENTS",
+      "",
+      summary.uniqueAgents?.ahmedabad || 0,
+      summary.uniqueAgents?.chennai || 0,
+      summary.uniqueAgents?.noida || 0,
+      summary.uniqueAgents?.total || 0,
+    ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
 
@@ -1581,14 +1623,14 @@ router.post("/merged-dispo-excel", async (req, res) => {
         };
     });
 
-    // RATIO - orange
+    // RATIO - orange (matching the image yellow background)
     const ratioRow = dataLength + 3;
     ["A", "B", "C", "D", "E", "F"].forEach((col) => {
       const cell = worksheet[col + ratioRow];
       if (cell)
         cell.s = {
           font: { bold: true, color: { rgb: "000000" } },
-          fill: { fgColor: { rgb: "F79646" } },
+          fill: { fgColor: { rgb: "FFFF00" } },
           alignment: { horizontal: "center" },
           border: {
             top: { style: "thin" },
@@ -1599,14 +1641,31 @@ router.post("/merged-dispo-excel", async (req, res) => {
         };
     });
 
-    // PICKUP RATIO - green
+    // PICKUP RATIO - red (matching the image)
     const pickupRow = dataLength + 4;
     ["A", "B", "C", "D", "E", "F"].forEach((col) => {
       const cell = worksheet[col + pickupRow];
       if (cell)
         cell.s = {
           font: { bold: true, color: { rgb: "000000" } },
-          fill: { fgColor: { rgb: "92D050" } },
+          fill: { fgColor: { rgb: "FF0000" } },
+          alignment: { horizontal: "center" },
+          border: {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          },
+        };
+    });
+
+    const uniqueAgentsRow = dataLength + 5;
+    ["A", "B", "C", "D", "E", "F"].forEach((col) => {
+      const cell = worksheet[col + uniqueAgentsRow];
+      if (cell)
+        cell.s = {
+          font: { bold: true, color: { rgb: "000000" } },
+          fill: { fgColor: { rgb: "00B0F0" } },
           alignment: { horizontal: "center" },
           border: {
             top: { style: "thin" },
@@ -1623,7 +1682,11 @@ router.post("/merged-dispo-excel", async (req, res) => {
       { s: { r: ansRow - 1, c: 0 }, e: { r: ansRow - 1, c: 1 } },
       { s: { r: prospectRow - 1, c: 0 }, e: { r: prospectRow - 1, c: 1 } },
       { s: { r: ratioRow - 1, c: 0 }, e: { r: ratioRow - 1, c: 1 } },
-      { s: { r: pickupRow - 1, c: 0 }, e: { r: pickupRow - 1, c: 1 } }
+      { s: { r: pickupRow - 1, c: 0 }, e: { r: pickupRow - 1, c: 1 } },
+      {
+        s: { r: uniqueAgentsRow - 1, c: 0 },
+        e: { r: uniqueAgentsRow - 1, c: 1 },
+      }
     );
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "Merged Dispo Report");
