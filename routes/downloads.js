@@ -479,11 +479,11 @@ router.post("/talktime-excel", async (req, res) => {
 
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${branch}_${reportType}_Report.xlsx"`
+      `attachment; filename="${branch}_${reportType}_Report.xlsx"`,
     );
 
     res.send(buffer);
@@ -511,10 +511,10 @@ router.post("/dispo-excel", async (req, res) => {
       day === 1 || day === 21 || day === 31
         ? "ST"
         : day === 2 || day === 22
-        ? "ND"
-        : day === 3 || day === 23
-        ? "RD"
-        : "TH";
+          ? "ND"
+          : day === 3 || day === 23
+            ? "RD"
+            : "TH";
     const month = reportDate
       .toLocaleString("en-US", { month: "short" })
       .toUpperCase();
@@ -759,7 +759,7 @@ router.post("/dispo-excel", async (req, res) => {
       {
         s: { r: uniqueAgentsRow - 1, c: 2 },
         e: { r: uniqueAgentsRow - 1, c: 4 },
-      }
+      },
     );
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "Dispo Report");
@@ -777,11 +777,11 @@ router.post("/dispo-excel", async (req, res) => {
 
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${branch}_Dispo_Report.xlsx"`
+      `attachment; filename="${branch}_Dispo_Report.xlsx"`,
     );
 
     res.send(buffer);
@@ -810,10 +810,10 @@ router.post("/agent-dispo-excel", async (req, res) => {
         day === 1 || day === 21 || day === 31
           ? "ST"
           : day === 2 || day === 22
-          ? "ND"
-          : day === 3 || day === 23
-          ? "RD"
-          : "TH";
+            ? "ND"
+            : day === 3 || day === 23
+              ? "RD"
+              : "TH";
       const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
       const year = d.getFullYear();
       return `${day}${suffix} ${month} ${year}`;
@@ -1016,7 +1016,7 @@ router.post("/agent-dispo-excel", async (req, res) => {
       { s: { r: dataLength - 1, c: 0 }, e: { r: dataLength - 1, c: 1 } },
       { s: { r: dataLength, c: 0 }, e: { r: dataLength, c: 1 } },
       { s: { r: dataLength + 1, c: 0 }, e: { r: dataLength + 1, c: 1 } },
-      { s: { r: dataLength + 2, c: 0 }, e: { r: dataLength + 2, c: 1 } }
+      { s: { r: dataLength + 2, c: 0 }, e: { r: dataLength + 2, c: 1 } },
     );
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "Agent Dispo Report");
@@ -1034,11 +1034,11 @@ router.post("/agent-dispo-excel", async (req, res) => {
 
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${agentName}_Dispo_Report.xlsx"`
+      `attachment; filename="${agentName}_Dispo_Report.xlsx"`,
     );
 
     res.send(buffer);
@@ -1075,10 +1075,10 @@ router.post("/agent-excel", async (req, res) => {
         day === 1 || day === 21 || day === 31
           ? "ST"
           : day === 2 || day === 22
-          ? "ND"
-          : day === 3 || day === 23
-          ? "RD"
-          : "TH";
+            ? "ND"
+            : day === 3 || day === 23
+              ? "RD"
+              : "TH";
       const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
       const year = d.getFullYear();
       return `${day}${suffix} ${month} ${year}`;
@@ -1211,11 +1211,11 @@ router.post("/agent-excel", async (req, res) => {
 
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${agentName}_Report.xlsx"`
+      `attachment; filename="${agentName}_Report.xlsx"`,
     );
 
     res.send(buffer);
@@ -1381,11 +1381,11 @@ router.post("/pipeline-excel", async (req, res) => {
 
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${branch}_Pipeline_Report.xlsx"`
+      `attachment; filename="${branch}_Pipeline_Report.xlsx"`,
     );
 
     res.send(buffer);
@@ -1413,10 +1413,10 @@ router.post("/merged-dispo-excel", async (req, res) => {
       day === 1 || day === 21 || day === 31
         ? "ST"
         : day === 2 || day === 22
-        ? "ND"
-        : day === 3 || day === 23
-        ? "RD"
-        : "TH";
+          ? "ND"
+          : day === 3 || day === 23
+            ? "RD"
+            : "TH";
     const month = reportDate
       .toLocaleString("en-US", { month: "short" })
       .toUpperCase();
@@ -1686,7 +1686,7 @@ router.post("/merged-dispo-excel", async (req, res) => {
       {
         s: { r: uniqueAgentsRow - 1, c: 0 },
         e: { r: uniqueAgentsRow - 1, c: 1 },
-      }
+      },
     );
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "Merged Dispo Report");
@@ -1704,11 +1704,11 @@ router.post("/merged-dispo-excel", async (req, res) => {
 
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="Merged_Dispo_Report_${date}.xlsx"`
+      `attachment; filename="Merged_Dispo_Report_${date}.xlsx"`,
     );
 
     res.send(buffer);
@@ -1728,7 +1728,7 @@ router.get("/logs", async (req, res) => {
         users:user_id (
           username
         )
-      `
+      `,
       )
       .order("downloaded_at", { ascending: false })
       .limit(100);

@@ -139,7 +139,7 @@ router.get("/report/:branch", async (req, res) => {
         WHERE h.name IS NOT NULL
           AND DATE(l.write_date) = $1
           AND d.name IS NOT NULL`,
-        [reportDate]
+        [reportDate],
       );
       crmDispos = rows;
       rows.forEach((row) => {
@@ -178,7 +178,7 @@ router.get("/report/:branch", async (req, res) => {
           AND h.branch_id = $1
           AND DATE(l.write_date) = $2
           AND d.name IS NOT NULL`,
-        [branchId, reportDate]
+        [branchId, reportDate],
       );
       crmDispos = rows;
       rows.forEach((row) => {
@@ -201,9 +201,6 @@ router.get("/report/:branch", async (req, res) => {
       // );
     }
 
-    pgConnection.release();
-    pgConnection = null;
-
     // Get Dialer dispositions from MySQL
     mysqlConnection = await mysqlPool.getConnection();
 
@@ -213,12 +210,10 @@ router.get("/report/:branch", async (req, res) => {
     if (upperBranch !== "ALL") {
       // Get employee names for the specific branch from PostgreSQL
       const branchId = getBranchId(upperBranch);
-      const pgConn = await pgPool.connect();
-      const { rows: employees } = await pgConn.query(
+      const { rows: employees } = await pgConnection.query(
         "SELECT name FROM public.hr_employee WHERE branch_id = $1 ORDER BY id ASC",
-        [branchId]
+        [branchId],
       );
-      pgConn.release();
 
       const employeeNames = employees
         .map((e) => e.name?.toLowerCase())
@@ -227,7 +222,7 @@ router.get("/report/:branch", async (req, res) => {
       if (employeeNames.length > 0) {
         const [allDialerAns] = await mysqlConnection.execute(
           `SELECT agent_name, disposition_name FROM call_logs.DialerAns WHERE DATE(createdAt) = ?`,
-          [reportDate]
+          [reportDate],
         );
 
         // Filter by employee names
@@ -235,7 +230,7 @@ router.get("/report/:branch", async (req, res) => {
           if (!row.agent_name) return false;
           const agentLower = row.agent_name.toLowerCase();
           const matched = employeeNames.some((name) =>
-            agentLower.includes(name)
+            agentLower.includes(name),
           );
           if (matched) {
             dialerAgentNames.add(agentLower.trim());
@@ -244,29 +239,40 @@ router.get("/report/:branch", async (req, res) => {
         });
       }
     } else {
-      const [rows] = await mysqlConnection.execute(
-        `SELECT agent_name, disposition_name FROM call_logs.DialerAns WHERE DATE(createdAt) = ?`,
-        [reportDate]
+      // For ALL branch: Use the same logic as merged report - filter by ALL known employees from ALL branches
+      // This ensures NORMAL ALL report data matches MERGED report TOTAL_CALLS
+      const { rows: allEmployees } = await pgConnection.query(
+        "SELECT name FROM public.hr_employee WHERE branch_id IN (1, 2, 3) ORDER BY id ASC",
       );
-      dialerAnsDispos = rows;
-      rows.forEach((row) => {
-        if (row.agent_name)
-          dialerAgentNames.add(row.agent_name.toLowerCase().trim());
+
+      const allEmployeeNames = allEmployees
+        .map((e) => e.name?.toLowerCase())
+        .filter(Boolean);
+
+      const [allDialerAns] = await mysqlConnection.execute(
+        `SELECT agent_name, disposition_name FROM call_logs.DialerAns WHERE DATE(createdAt) = ?`,
+        [reportDate],
+      );
+
+      // Filter by ALL employee names from ALL branches (same logic as merged report)
+      dialerAnsDispos = allDialerAns.filter((row) => {
+        if (!row.agent_name) return false;
+        const agentLower = row.agent_name.toLowerCase();
+        const matched = allEmployeeNames.some((name) =>
+          agentLower.includes(name),
+        );
+        if (matched) {
+          dialerAgentNames.add(agentLower.trim());
+        }
+        return matched;
       });
     }
 
-    const [dialerUndisposedAns] = await mysqlConnection.execute(
-      `SELECT COUNT(*) AS undisposed_count FROM call_logs.DialerAns
-       WHERE DATE(createdAt) = ? AND (disposition_name IS NULL OR TRIM(disposition_name) = '')`,
-      [reportDate]
-    );
+    pgConnection.release();
+    pgConnection = null;
 
     mysqlConnection.release();
     mysqlConnection = null;
-
-    const dialerUndisposedCount = Number.parseInt(
-      dialerUndisposedAns[0]?.undisposed_count || 0
-    );
 
     // Process and aggregate dispositions
     const dispoCountsDialer = {};
@@ -290,7 +296,8 @@ router.get("/report/:branch", async (req, res) => {
       }
     });
 
-    dispoCountsDialer["UNDISPOSED"] = dialerUndisposedCount;
+    // Note: UNDISPOSED is not counted for branch-filtered data to match merged report
+    // dispoCountsDialer["UNDISPOSED"] = dialerUndisposedCount;
 
     // Count CRM dispositions
     crmDispos.forEach((row) => {
@@ -345,7 +352,7 @@ router.get("/report/:branch", async (req, res) => {
       ansCallsDialer + ansCallsCRM > 0
         ? Math.round(
             ((prospectDialer + prospectCRM) / (ansCallsDialer + ansCallsCRM)) *
-              100
+              100,
           )
         : 0;
 
@@ -361,7 +368,7 @@ router.get("/report/:branch", async (req, res) => {
         ? Math.round(
             ((ansCallsDialer + ansCallsCRM) /
               (grandTotalDialer + grandTotalCRM)) *
-              100
+              100,
           )
         : 0;
 
@@ -438,7 +445,8 @@ router.get("/merged-report", async (req, res) => {
       branchData[branch] = {
         dialerCounts: {},
         crmCounts: {},
-        uniqueAgents: new Set(),
+        crmAgentNames: new Set(),
+        dialerAgentNames: new Set(),
       };
       DISPO_ORDER.forEach((d) => {
         branchData[branch].dialerCounts[d] = 0;
@@ -449,100 +457,91 @@ router.get("/merged-report", async (req, res) => {
     pgConnection = await pgPool.connect();
     mysqlConnection = await mysqlPool.getConnection();
 
-    // Fetch ALL dialer data once
-    const [allDialerAns] = await mysqlConnection.execute(
-      `SELECT agent_name, disposition_name FROM call_logs.DialerAns WHERE DATE(createdAt) = ?`,
-      [reportDate]
-    );
-
-    // Fetch employees for ALL branches at once
-    const { rows: allEmployees } = await pgConnection.query(
-      `SELECT name, branch_id FROM public.hr_employee WHERE branch_id IN (1, 2, 3) AND name IS NOT NULL ORDER BY id ASC`
-    );
-
-    // Create a map of lowercase employee names to branch
-    const employeeToBranch = {};
-    allEmployees.forEach((emp) => {
-      if (emp.name) {
-        const cleanName = emp.name.toLowerCase().trim();
-        const branchName = Object.keys(branchIds).find(
-          (key) => branchIds[key] === emp.branch_id
-        );
-        employeeToBranch[cleanName] = branchName;
-      }
-    });
-
-    // Process dialer data once
-    allDialerAns.forEach((row) => {
-      if (!row.agent_name) return;
-
-      const agentLower = row.agent_name.toLowerCase().trim();
-
-      // Find which branch this agent belongs to
-      let matchedBranch = null;
-      let matchedEmpName = null;
-      for (const [empName, branch] of Object.entries(employeeToBranch)) {
-        // Check if agent name contains employee name OR employee name contains agent name
-        if (agentLower.includes(empName) || empName.includes(agentLower)) {
-          matchedBranch = branch;
-          matchedEmpName = empName;
-          break;
-        }
-      }
-
-      if (matchedBranch) {
-        branchData[matchedBranch].uniqueAgents.add(matchedEmpName);
-
-        if (row.disposition_name && row.disposition_name.trim() !== "") {
-          const mapped = mapDisposition(row.disposition_name, "DIALER");
-          if (
-            mapped !== "UNDISPOSED" &&
-            branchData[matchedBranch].dialerCounts[mapped] !== undefined
-          ) {
-            branchData[matchedBranch].dialerCounts[mapped]++;
-          }
-        } else {
-          branchData[matchedBranch].dialerCounts["UNDISPOSED"]++;
-        }
-      }
-    });
-
-    // Fetch CRM data for each branch
+    // Process each branch using the SAME logic as the normal report endpoint
     for (const branch of branches) {
       const branchId = branchIds[branch];
 
+      // Get CRM dispositions for this branch (same query as normal report)
       const { rows: crmDispos } = await pgConnection.query(
-        `SELECT d.name AS disposition, h.name AS agent_name
-         FROM public.lean_manual_lead AS l
-         LEFT JOIN public.dispo_list_name AS d ON l.disposition_id = d.id
-         LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
-         WHERE h.name IS NOT NULL AND h.branch_id = $1 AND DATE(l.write_date) = $2 AND d.name IS NOT NULL`,
-        [branchId, reportDate]
+        `SELECT
+          d.name AS disposition,
+          h.name AS agent_name
+        FROM public.lean_manual_lead AS l
+        LEFT JOIN public.dispo_list_name AS d ON l.disposition_id = d.id
+        LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
+        WHERE h.name IS NOT NULL
+          AND h.branch_id = $1
+          AND DATE(l.write_date) = $2
+          AND d.name IS NOT NULL`,
+        [branchId, reportDate],
       );
 
-      // const { rows: crmUndisposed } = await pgConnection.query(
-      //   `SELECT COUNT(*) AS undisposed_count
-      //    FROM public.lean_manual_lead AS l
-      //    LEFT JOIN public.hr_employee AS h ON h.user_id = l.employee_id
-      //    WHERE h.name IS NOT NULL AND h.branch_id = $1 AND DATE(l.write_date) = $2 AND l.disposition_id IS NULL`,
-      //   [branchId, reportDate]
-      // );
-
+      // Count CRM dispositions (same logic as normal report)
       crmDispos.forEach((row) => {
         const mapped = mapDisposition(row.disposition, "CRM");
         if (branchData[branch].crmCounts[mapped] !== undefined) {
           branchData[branch].crmCounts[mapped]++;
         }
         if (row.agent_name) {
-          branchData[branch].uniqueAgents.add(
-            row.agent_name.toLowerCase().trim()
+          branchData[branch].crmAgentNames.add(
+            row.agent_name.toLowerCase().trim(),
           );
         }
       });
 
-      // branchData[branch].crmCounts["UNDISPOSED"] = Number.parseInt(
-      //   crmUndisposed[0]?.undisposed_count || 0
-      // );
+      // Get employee names for this branch (same as normal report)
+      const { rows: employees } = await pgConnection.query(
+        "SELECT name FROM public.hr_employee WHERE branch_id = $1 ORDER BY id ASC",
+        [branchId],
+      );
+
+      const employeeNames = employees
+        .map((e) => e.name?.toLowerCase())
+        .filter(Boolean);
+
+      if (employeeNames.length > 0) {
+        // Get ALL dialer data for the date (same query as normal report)
+        const [allDialerAns] = await mysqlConnection.execute(
+          `SELECT agent_name, disposition_name FROM call_logs.DialerAns WHERE DATE(createdAt) = ?`,
+          [reportDate],
+        );
+
+        // Filter by employee names (same logic as normal report)
+        const dialerAnsDispos = allDialerAns.filter((row) => {
+          if (!row.agent_name) return false;
+          const agentLower = row.agent_name.toLowerCase();
+          const matched = employeeNames.some((name) =>
+            agentLower.includes(name),
+          );
+          if (matched) {
+            branchData[branch].dialerAgentNames.add(agentLower.trim());
+          }
+          return matched;
+        });
+
+        // Count dialer dispositions (same logic as normal report)
+        dialerAnsDispos.forEach((row) => {
+          if (row.disposition_name && row.disposition_name.trim() !== "") {
+            const mapped = mapDisposition(row.disposition_name, "DIALER");
+            if (
+              mapped !== "UNDISPOSED" &&
+              branchData[branch].dialerCounts[mapped] !== undefined
+            ) {
+              branchData[branch].dialerCounts[mapped]++;
+            }
+          }
+        });
+      }
+
+      // Get dialer undisposed count for this branch
+      const [dialerUndisposedAns] = await mysqlConnection.execute(
+        `SELECT COUNT(*) AS undisposed_count FROM call_logs.DialerAns
+         WHERE DATE(createdAt) = ? AND (disposition_name IS NULL OR TRIM(disposition_name) = '')`,
+        [reportDate],
+      );
+
+      // Note: We don't add undisposed to branch counts as it's global and would be duplicated
+      // The normal report also has this issue - undisposed is counted globally, not per branch
     }
 
     pgConnection.release();
@@ -591,13 +590,19 @@ router.get("/merged-report", async (req, res) => {
         }
       });
 
+      // Combine unique agents from both CRM and Dialer
+      const allAgents = new Set([
+        ...branchData[branch].crmAgentNames,
+        ...branchData[branch].dialerAgentNames,
+      ]);
+
       return {
         grand,
         ans,
         prospect,
         ratio: ans > 0 ? Math.round((prospect / ans) * 100) : 0,
         pickupRatio: grand > 0 ? Math.round((ans / grand) * 100) : 0,
-        uniqueAgents: branchData[branch].uniqueAgents.size,
+        uniqueAgents: allAgents.size,
       };
     };
 
@@ -611,9 +616,12 @@ router.get("/merged-report", async (req, res) => {
     const totalProspect =
       noidaSummary.prospect + amdSummary.prospect + chennaiSummary.prospect;
     const allUniqueAgents = new Set([
-      ...branchData["AHMEDABAD"].uniqueAgents,
-      ...branchData["CHENNAI"].uniqueAgents,
-      ...branchData["NOIDA"].uniqueAgents,
+      ...branchData["AHMEDABAD"].crmAgentNames,
+      ...branchData["AHMEDABAD"].dialerAgentNames,
+      ...branchData["CHENNAI"].crmAgentNames,
+      ...branchData["CHENNAI"].dialerAgentNames,
+      ...branchData["NOIDA"].crmAgentNames,
+      ...branchData["NOIDA"].dialerAgentNames,
     ]);
     const totalUniqueAgents = allUniqueAgents.size;
 
